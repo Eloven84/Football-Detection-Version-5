@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Football Analytic</title> // — Calvin Institute of Technology</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --c:#7B1618;--cr:#9B2020;--ro:#B84060;--bl:#D9829A;
+  --pe:#F2D0D8;--pa:#FBF0F2;--bg:#FAF5F6;
+  --ink:#1A0D10;--mu:#7A5860;--bor:#E5CDD2;--wh:#FFFFFF;
+  --sw:228px;--th:62px;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--ink);min-height:100vh;overflow-x:hidden}
+::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:var(--bl);border-radius:99px}
+
+/* TOPBAR */
+.tb{position:fixed;top:0;left:0;right:0;height:var(--th);background:var(--wh);border-bottom:1px solid var(--bor);display:flex;align-items:center;padding:0 22px;gap:11px;z-index:200}
+.tb-logo{width:34px;height:34px;background:var(--c);border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Playfair Display',serif;font-size:11px;letter-spacing:.3px;flex-shrink:0}
+.tb-title{font-family:'Playfair Display',serif;font-size:13.5px;color:var(--c);font-weight:600;white-space:nowrap}
+.tb-div{flex:1}
+.tb-av{width:30px;height:30px;background:var(--pe);border:2px solid var(--bl);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:var(--c)}
+.tb-un{font-size:12px;color:var(--mu);font-weight:500}
+
+/* SIDEBAR */
+.sb{position:fixed;top:var(--th);left:0;bottom:0;width:var(--sw);background:var(--c);padding:18px 0 22px;z-index:100;display:flex;flex-direction:column;gap:2px;overflow-y:auto}
+.sb-sec{font-size:9px;font-weight:700;color:rgba(255,255,255,.35);letter-spacing:.14em;text-transform:uppercase;padding:10px 16px 3px;margin-top:6px}
+.ni{display:flex;align-items:center;gap:9px;padding:10px 16px;color:rgba(255,255,255,.6);font-size:13px;font-weight:500;cursor:pointer;transition:.15s;border-left:3px solid transparent;text-decoration:none;user-select:none}
+.ni:hover{color:#fff;background:rgba(255,255,255,.08)}
+.ni.on{color:#fff;background:rgba(255,255,255,.14);border-left-color:var(--bl)}
+.ni-ic{width:15px;height:15px;flex-shrink:0;opacity:.75}
+.ni-b{margin-left:auto;background:var(--bl);color:var(--c);font-size:9.5px;font-weight:700;padding:2px 6px;border-radius:99px}
+
+/* MAIN */
+.main{margin-top:var(--th);margin-left:var(--sw);padding:26px 30px;min-height:calc(100vh - var(--th))}
+
+/* PAGES */
+.pg{display:none;animation:fi .22s ease}
+.pg.on{display:block}
+@keyframes fi{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* PAGE HEADER */
+.ph-t{font-family:'Playfair Display',serif;font-size:22px;color:var(--ink);font-weight:600;line-height:1.2}
+.ph-s{font-size:13px;color:var(--mu);margin-top:3px}
+.ph-row{margin-bottom:22px}
+
+/* CARD */
+.card{background:var(--wh);border:1px solid var(--bor);border-radius:13px;padding:22px}
+.ct{font-size:10.5px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.1em;margin-bottom:14px}
+
+/* UPLOAD ZONE */
+.uz{border:2px dashed var(--bl);border-radius:11px;background:var(--pa);padding:44px 22px;text-align:center;cursor:pointer;transition:.2s;position:relative}
+.uz:hover,.uz.dv{border-color:var(--ro);background:var(--pe)}
+.uz input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.uz-ic{width:48px;height:48px;background:var(--pe);border-radius:11px;display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
+.uz-ic svg{color:var(--c)}
+.uz h3{font-size:14px;font-weight:600;color:var(--ink);margin-bottom:4px}
+.uz p{font-size:12.5px;color:var(--mu)}
+.uz p span{color:var(--ro);font-weight:600;cursor:pointer}
+.fmts{display:flex;gap:5px;justify-content:center;flex-wrap:wrap;margin-top:10px}
+.fmt{font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;background:var(--pe);color:var(--c);border:1px solid var(--bl)}
+
+/* FILE PREVIEW */
+.fp{display:none;margin-top:12px;padding:11px 13px;background:var(--pa);border:1px solid var(--bor);border-radius:9px;align-items:center;gap:9px}
+.fp.sh{display:flex}
+.fp-ic{width:32px;height:32px;background:var(--pe);border-radius:7px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.fp h4{font-size:13px;font-weight:600;color:var(--ink)}
+.fp span{font-size:11px;color:var(--mu)}
+.fp-rm{margin-left:auto;width:23px;height:23px;border-radius:50%;background:none;border:1px solid var(--bor);cursor:pointer;color:var(--mu);display:flex;align-items:center;justify-content:center;font-size:14px;transition:.15s}
+.fp-rm:hover{background:var(--pe);color:var(--c)}
+
+/* PROGRESS */
+.pw{display:none;margin-top:16px}
+.pw.sh{display:block}
+.pw-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px}
+.pw-lb{font-size:13px;font-weight:500;color:var(--ink)}
+.pw-pc{font-size:13px;font-weight:700;color:var(--ro)}
+.pt{height:5px;background:var(--pe);border-radius:99px;overflow:hidden}
+.pf{height:100%;background:linear-gradient(90deg,var(--ro),var(--c));border-radius:99px;transition:width .4s ease;width:0%}
+.sps{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px}
+.sp{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--bor);color:var(--mu);transition:.3s}
+.sp.done{background:#e8f5ee;border-color:#7cba9a;color:#2d7a5c;font-weight:600}
+.sp.act{background:var(--pe);border-color:var(--ro);color:var(--ro);font-weight:700}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:.18s;text-decoration:none}
+.bp{background:var(--c);color:#fff}.bp:hover{background:var(--cr);transform:translateY(-1px)}
+.bp:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.bs{background:var(--pe);color:var(--c);border:1px solid var(--bl)}.bs:hover{background:var(--bl)}
+.bd{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5}.bd:hover{background:#fca5a5}
+.bg2{background:transparent;color:var(--mu);border:1px solid var(--bor)}.bg2:hover{background:var(--pe);color:var(--c)}
+.bsm{padding:6px 12px;font-size:12px}
+.bfw{width:100%;justify-content:center;margin-top:14px}
+
+/* FORM */
+.fg{margin-bottom:16px}
+.fl{display:block;font-size:11.5px;font-weight:700;color:var(--ink);margin-bottom:5px}
+.fi,.fta,.fse{width:100%;padding:9px 12px;border:1.5px solid var(--bor);border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);background:var(--wh);outline:none;transition:.18s}
+.fi:focus,.fta:focus,.fse:focus{border-color:var(--ro)}
+.fta{min-height:100px;resize:vertical}
+.fn{font-size:11px;color:var(--mu);margin-top:3px}
+
+/* ALERTS */
+.al{padding:11px 13px;border-radius:8px;font-size:13px;font-weight:500;display:none;align-items:center;gap:8px;margin-top:13px}
+.al.sh{display:flex}
+.al-ok{background:#d1fae5;color:#065f46;border:1px solid #6ee7b7}
+.al-er{background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
+.al a{color:inherit;font-weight:700}
+
+/* VIDEO GRID */
+.vg{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px}
+.vc{background:var(--wh);border:1px solid var(--bor);border-radius:12px;overflow:hidden;cursor:pointer;transition:.2s}
+.vc:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(123,22,24,.1)}
+.vth{aspect-ratio:16/9;background:var(--pa);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border-bottom:1px solid var(--bor);position:relative;overflow:hidden}
+.vth::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(184,64,96,.07) 0%,transparent 60%)}
+.vth svg{color:var(--c);opacity:.45}
+.vth span{font-size:11px;color:var(--mu);font-weight:500;z-index:1}
+.vcb{padding:11px 13px}
+.vc-nm{font-size:13px;font-weight:600;color:var(--ink);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vc-mt{font-size:11px;color:var(--mu);display:flex;align-items:center;flex-wrap:wrap;gap:5px}
+.vc-mt span+span::before{content:'·'}
+.sd{display:inline-block;width:5px;height:5px;border-radius:50%;margin-right:2px}
+.s-done{background:#10b981}.s-processing{background:#f59e0b}.s-queued{background:#94a3b8}.s-error{background:#ef4444}
+
+/* DETAIL */
+.dh{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:20px;flex-wrap:wrap}
+.dt{font-family:'Playfair Display',serif;font-size:19px;color:var(--ink);font-weight:600}
+.dm{font-size:11.5px;color:var(--mu);margin-top:4px;display:flex;gap:9px;flex-wrap:wrap}
+.da{display:flex;gap:7px;flex-shrink:0}
+.sl{font-family:'Playfair Display',serif;font-size:15px;color:var(--ink);font-weight:600;margin:20px 0 11px}
+.sl:first-of-type{margin-top:0}
+
+/* VIDEO PLAYER BOX */
+.vpb{background:var(--pa);border:2px dashed var(--bl);border-radius:12px;aspect-ratio:16/7;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;margin-bottom:18px}
+.vpb svg{color:var(--c);opacity:.4}
+.vpb p{font-size:12.5px;color:var(--mu)}
+
+/* STAT CARDS */
+.sg{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px;margin-bottom:18px}
+.sc{background:var(--pa);border:1px solid var(--bor);border-radius:10px;padding:13px 15px}
+.sc-lb{font-size:10px;font-weight:700;color:var(--mu);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px}
+.sc-v{font-family:'Playfair Display',serif;font-size:20px;color:var(--c)}
+.sc-u{font-size:10.5px;color:var(--mu);margin-left:2px}
+
+/* POSSESSION BAR */
+.pbw{margin:9px 0}
+.pb{height:15px;border-radius:99px;overflow:hidden;display:flex;background:var(--pe)}
+.pba{background:var(--c);transition:width .6s ease}.pbb{background:var(--bl)}
+.pb-lbs{display:flex;justify-content:space-between;margin-top:5px}
+.pb-lb{font-size:11.5px;font-weight:700}
+.pb-lb.a{color:var(--c)}.pb-lb.b{color:var(--ro)}
+
+/* ANALYSIS TEXT */
+.at{font-size:13.5px;line-height:1.85;color:var(--mu);background:var(--pa);border:1px solid var(--bor);border-radius:11px;padding:16px 18px}
+.at strong{color:var(--c)}
+
+/* HEATMAP */
+.hm{aspect-ratio:16/8;background:linear-gradient(135deg,#1a4a2e 0%,#2d7a4a 100%);border-radius:10px;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.hm::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse at 35% 50%,rgba(184,64,96,.6) 0%,transparent 55%),radial-gradient(ellipse at 70% 40%,rgba(123,22,24,.5) 0%,transparent 45%)}
+.hm p{position:relative;z-index:1;font-size:12px;color:rgba(255,255,255,.7);font-weight:500}
+.hm-b{background:linear-gradient(135deg,#1a2a4a 0%,#2d4a7a 100%)}
+.hm-b::before{background:radial-gradient(ellipse at 65% 50%,rgba(64,96,184,.6) 0%,transparent 55%),radial-gradient(ellipse at 30% 40%,rgba(22,44,123,.5) 0%,transparent 45%)}
+
+/* BREADCRUMB */
+.bc{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--mu);margin-bottom:16px}
+.bc a{color:var(--mu);text-decoration:none;cursor:pointer}.bc a:hover{color:var(--c)}.bc-s{color:var(--bor)}
+
+/* EMPTY STATE */
+.es{text-align:center;padding:52px 20px}
+.es svg{color:var(--bl);margin-bottom:13px;opacity:.45}
+.es h3{font-family:'Playfair Display',serif;font-size:16px;color:var(--ink);margin-bottom:6px}
+.es p{font-size:13px;color:var(--mu)}
+
+/* SEARCH */
+.sr{display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+.si{flex:1;min-width:180px;padding:8px 12px;border:1.5px solid var(--bor);border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;color:var(--ink);background:var(--wh);outline:none;transition:.18s}
+.si:focus{border-color:var(--ro)}
+
+/* MODAL */
+.mo{position:fixed;inset:0;z-index:300;background:rgba(26,13,16,.5);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;padding:18px}
+.mo.op{display:flex}
+.md{background:var(--wh);border-radius:15px;width:100%;max-width:480px;padding:26px;animation:su .2s ease;position:relative}
+@keyframes su{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+.md-x{position:absolute;top:14px;right:14px;width:26px;height:26px;background:var(--pa);border:1px solid var(--bor);border-radius:50%;cursor:pointer;color:var(--mu);display:flex;align-items:center;justify-content:center;font-size:14px;transition:.15s}
+.md-x:hover{background:var(--pe);color:var(--c)}
+.md-t{font-family:'Playfair Display',serif;font-size:17px;color:var(--ink);margin-bottom:4px;font-weight:600}
+.md-s{font-size:12.5px;color:var(--mu);margin-bottom:20px}
+.md-r{display:flex;gap:8px}
+
+/* SPINNER */
+.spin{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:rr .6s linear infinite}
+@keyframes rr{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<!-- TOPBAR -->
+<header class="tb">
+  <div class="tb-logo">CIT</div>
+  <span class="tb-title">Calvin Institute of Technology</span>
+  <div class="tb-div"></div>
+  <div style="display:flex;align-items:center;gap:9px">
+    <div class="tb-av">AD</div>
+    <span class="tb-un">Admin</span>
+  </div>
+</header>
+
+<!-- SIDEBAR -->
+<aside class="sb">
+  <div class="sb-sec">Football Analytic</div>
+  <a class="ni on" id="ni-upload" onclick="go('upload')">
+    <svg class="ni-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="3" width="18" height="18" rx="3"/><path d="M12 8v8M8 12l4-4 4 4"/>
+    </svg>Football Analytic Model
+  </a>
+  <a class="ni" id="ni-out" onclick="go('out')">
+    <svg class="ni-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M15 10l4.55-2.277A1 1 0 0121 8.65v6.7a1 1 0 01-1.45.897L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/>
+    </svg>Football Analytic Outputs
+    <span class="ni-b" id="ni-b">0</span>
+  </a>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+
+<!-- PAGE 1: UPLOAD -->
+<div class="pg on" id="pg-upload">
+  <div class="ph-row">
+    <h1 class="ph-t">Football Analytic Model</h1>
+    <p class="ph-s">Upload video pertandingan untuk dianalisis dengan RF-DETR &amp; ByteTrack</p>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 290px;gap:18px;align-items:start">
+    <div class="card">
+      <p class="ct">Upload Video Pertandingan</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:14px">
+        <div style="grid-column:1/-1"><label class="fl">Nama Video</label><input class="fi" id="in-vn" type="text" placeholder="Judul / deskripsi video…"></div>
+        <div><label class="fl">Tim 1 — Home</label><input class="fi" id="in-t1" type="text" placeholder="Nama tim home…"></div>
+        <div><label class="fl">Tim 2 — Away</label><input class="fi" id="in-t2" type="text" placeholder="Nama tim away…"></div>
+      </div>
+      <div class="uz" id="uz">
+        <input type="file" id="fi" accept=".mp4,.avi,.mov,.mkv">
+        <div class="uz-ic"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 10l4.55-2.277A1 1 0 0121 8.65v6.7a1 1 0 01-1.45.897L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg></div>
+        <h3>Attach Video from Computer</h3>
+        <p>Drag and drop, atau <span onclick="document.getElementById('fi').click()">pilih file</span></p>
+        <p style="margin-top:3px">Maximum Size 2 GB</p>
+        <div class="fmts"><span class="fmt">MP4</span><span class="fmt">AVI</span><span class="fmt">MOV</span><span class="fmt">MKV</span></div>
+      </div>
+      <div class="fp" id="fp">
+        <div class="fp-ic"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#7B1618" stroke-width="2"><path d="M15 10l4.55-2.277A1 1 0 0121 8.65v6.7a1 1 0 01-1.45.897L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg></div>
+        <div><h4 id="fp-nm">file.mp4</h4><span id="fp-sz">0 MB</span></div>
+        <button class="fp-rm" onclick="rmFile()">&#215;</button>
+      </div>
+      <div class="pw" id="pw">
+        <div class="pw-top"><span class="pw-lb" id="pw-lb">Menganalisis&#8230;</span><span class="pw-pc" id="pw-pc">0%</span></div>
+        <div class="pt"><div class="pf" id="pf"></div></div>
+        <div class="sps">
+          <span class="sp" id="sp1">Deteksi Objek</span>
+          <span class="sp" id="sp2">Tracking</span>
+          <span class="sp" id="sp3">Klasifikasi Tim</span>
+          <span class="sp" id="sp4">Bird Eye View</span>
+          <span class="sp" id="sp5">Analisis Statistik</span>
+        </div>
+      </div>
+      <div class="al al-ok" id="al-ok"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg><span id="al-ok-t">Selesai!</span></div>
+      <div class="al al-er" id="al-er"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg><span id="al-er-t">Error.</span></div>
+      <button class="btn bp bfw" id="apply-btn" onclick="doUpload()" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>Apply Model
+      </button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:13px">
+      <div class="card">
+        <p class="ct">Cara Penggunaan</p>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;gap:9px;align-items:flex-start"><div style="width:20px;height:20px;border-radius:50%;background:var(--pe);border:1.5px solid var(--bl);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--c);flex-shrink:0">1</div><div><p style="font-size:12.5px;font-weight:600">Isi informasi tim</p><p style="font-size:11.5px;color:var(--mu);margin-top:1px">Masukkan nama tim home &amp; away</p></div></div>
+          <div style="display:flex;gap:9px;align-items:flex-start"><div style="width:20px;height:20px;border-radius:50%;background:var(--pe);border:1.5px solid var(--bl);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--c);flex-shrink:0">2</div><div><p style="font-size:12.5px;font-weight:600">Upload video</p><p style="font-size:11.5px;color:var(--mu);margin-top:1px">Drag &amp; drop atau pilih file video</p></div></div>
+          <div style="display:flex;gap:9px;align-items:flex-start"><div style="width:20px;height:20px;border-radius:50%;background:var(--pe);border:1.5px solid var(--bl);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--c);flex-shrink:0">3</div><div><p style="font-size:12.5px;font-weight:600">Klik Apply Model</p><p style="font-size:11.5px;color:var(--mu);margin-top:1px">Analisis berjalan otomatis di background</p></div></div>
+        </div>
+      </div>
+      <div class="card">
+        <p class="ct">Fitur Analisis</p>
+        <div style="display:flex;flex-direction:column;gap:5px">
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:4px;height:4px;border-radius:50%;background:var(--c);flex-shrink:0"></span><span style="font-size:11.5px;color:var(--mu)">Deteksi &amp; Tracking Pemain</span></div>
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:4px;height:4px;border-radius:50%;background:var(--c);flex-shrink:0"></span><span style="font-size:11.5px;color:var(--mu)">Bird Eye View Lapangan</span></div>
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:4px;height:4px;border-radius:50%;background:var(--c);flex-shrink:0"></span><span style="font-size:11.5px;color:var(--mu)">Prediksi Arah Bola</span></div>
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:4px;height:4px;border-radius:50%;background:var(--c);flex-shrink:0"></span><span style="font-size:11.5px;color:var(--mu)">Penguasaan Bola (KNN)</span></div>
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:4px;height:4px;border-radius:50%;background:var(--c);flex-shrink:0"></span><span style="font-size:11.5px;color:var(--mu)">Klasifikasi Tim (KMeans)</span></div>
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:4px;height:4px;border-radius:50%;background:var(--c);flex-shrink:0"></span><span style="font-size:11.5px;color:var(--mu)">Heatmap Posisi Pemain</span></div>
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:4px;height:4px;border-radius:50%;background:var(--c);flex-shrink:0"></span><span style="font-size:11.5px;color:var(--mu)">Estimasi Kecepatan</span></div>
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:4px;height:4px;border-radius:50%;background:var(--c);flex-shrink:0"></span><span style="font-size:11.5px;color:var(--mu)">Pass Network</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- PAGE 2: RESULT -->
+<div class="pg" id="pg-result">
+  <div class="bc"><a onclick="go('upload')">Football Analytic Model</a><span class="bc-s">&#8250;</span><span>Hasil Analisis</span></div>
+  <div class="dh">
+    <div><h1 class="ph-t">Result</h1><div class="dm"><span id="r-vn">&#8212;</span><span id="r-meta">&#8212;</span><span id="r-time">&#8212;</span></div></div>
+    <button class="btn bp bsm" onclick="go('out')">Lihat Semua Output &#8594;</button>
+  </div>
+  <p class="sl">Detection and Tracking</p>
+  <div class="vpb" id="r-vpb">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M15 10l4.55-2.277A1 1 0 0121 8.65v6.7a1 1 0 01-1.45.897L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
+    <p>Output Video with Detection and Tracking Annotations</p>
+  </div>
+  <p class="sl">Analysis</p>
+  <div class="sg">
+    <div class="sc"><p class="sc-lb">Penguasaan Tim 1</p><p class="sc-v" id="r-p1">&#8212;<span class="sc-u">%</span></p></div>
+    <div class="sc"><p class="sc-lb">Penguasaan Tim 2</p><p class="sc-v" id="r-p2">&#8212;<span class="sc-u">%</span></p></div>
+    <div class="sc"><p class="sc-lb">Kec. Bola Maks.</p><p class="sc-v" id="r-bm">&#8212;<span class="sc-u">km/h</span></p></div>
+    <div class="sc"><p class="sc-lb">Kec. Bola Avg</p><p class="sc-v" id="r-ba">&#8212;<span class="sc-u">km/h</span></p></div>
+    <div class="sc"><p class="sc-lb">Total Passing</p><p class="sc-v" id="r-ps">&#8212;</p></div>
+    <div class="sc"><p class="sc-lb">Total Frame</p><p class="sc-v" id="r-fr">&#8212;</p></div>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <p class="ct">Ball Possession</p>
+    <div class="pbw">
+      <div class="pb"><div class="pba" id="r-pba" style="width:50%"></div><div class="pbb" id="r-pbb" style="width:50%"></div></div>
+      <div class="pb-lbs"><span class="pb-lb a" id="r-l1">Tim 1 &#8212; 50%</span><span class="pb-lb b" id="r-l2">50% &#8212; Tim 2</span></div>
+    </div>
+  </div>
+  <div class="at" id="r-at">&#8212;</div>
+</div>
+
+<!-- PAGE 3: ALL OUTPUTS -->
+<div class="pg" id="pg-out">
+  <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;margin-bottom:18px">
+    <div><h1 class="ph-t">Football Analytic Outputs</h1><p class="ph-s">Seluruh video yang telah dianalisis (<span id="tc">0</span> video)</p></div>
+    <button class="btn bp bsm" onclick="go('upload')">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7-7 7 7"/></svg>Upload Baru
+    </button>
+  </div>
+  <div class="sr">
+    <input class="si" id="sq" type="text" placeholder="Cari nama video&#8230;" oninput="loadOut(1)">
+    <select class="fse" id="ss" style="width:130px" onchange="loadOut(1)">
+      <option value="">Semua Status</option>
+      <option value="done">Selesai</option>
+      <option value="processing">Diproses</option>
+      <option value="queued">Antrian</option>
+      <option value="error">Error</option>
+    </select>
+  </div>
+  <div class="vg" id="vg"></div>
+  <div id="pgb" style="display:flex;gap:7px;justify-content:center;margin-top:20px"></div>
+</div>
+
+<!-- PAGE 4: DETAIL -->
+<div class="pg" id="pg-det">
+  <div class="bc"><a onclick="go('out')">Football Analytic Outputs</a><span class="bc-s">&#8250;</span><span id="bc-d">Detail</span></div>
+  <div class="dh">
+    <div><h2 class="dt" id="d-t">&#8212;</h2><div class="dm"><span id="d-tm">&#8212;</span><span id="d-du">&#8212;</span><span id="d-re">&#8212;</span><span id="d-da">&#8212;</span></div></div>
+    <div class="da">
+      <button class="btn bs bsm" onclick="go('upd')">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>Update
+      </button>
+      <button class="btn bd bsm" onclick="openDel()">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>Delete
+      </button>
+    </div>
+  </div>
+  <p class="sl">Detection and Tracking</p>
+  <div class="vpb" id="d-vpb" style="margin-bottom:18px">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M15 10l4.55-2.277A1 1 0 0121 8.65v6.7a1 1 0 01-1.45.897L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
+    <p>Output Video with Detection and Tracking Annotations</p>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px">
+    <div class="card"><p class="ct">Heatmap Tim 1 (Home)</p><div class="hm" id="d-hm1"><p id="d-hm1-lb">Heatmap Tim 1</p></div></div>
+    <div class="card"><p class="ct">Heatmap Tim 2 (Away)</p><div class="hm hm-b" id="d-hm2"><p id="d-hm2-lb">Heatmap Tim 2</p></div></div>
+  </div>
+  <p class="sl">Analysis</p>
+  <div class="sg">
+    <div class="sc"><p class="sc-lb">Penguasaan Tim 1</p><p class="sc-v" id="d-p1">&#8212;<span class="sc-u">%</span></p></div>
+    <div class="sc"><p class="sc-lb">Penguasaan Tim 2</p><p class="sc-v" id="d-p2">&#8212;<span class="sc-u">%</span></p></div>
+    <div class="sc"><p class="sc-lb">Kec. Bola Maks.</p><p class="sc-v" id="d-bm">&#8212;<span class="sc-u">km/h</span></p></div>
+    <div class="sc"><p class="sc-lb">Kec. Bola Avg</p><p class="sc-v" id="d-ba">&#8212;<span class="sc-u">km/h</span></p></div>
+    <div class="sc"><p class="sc-lb">Kec. Pemain Maks.</p><p class="sc-v" id="d-pm">&#8212;<span class="sc-u">km/h</span></p></div>
+    <div class="sc"><p class="sc-lb">Total Passing</p><p class="sc-v" id="d-ps">&#8212;</p></div>
+    <div class="sc"><p class="sc-lb">Total Frame</p><p class="sc-v" id="d-fr">&#8212;</p></div>
+    <div class="sc"><p class="sc-lb">Waktu Proses</p><p class="sc-v" id="d-pt">&#8212;<span class="sc-u">s</span></p></div>
+  </div>
+  <div class="card" style="margin-bottom:14px">
+    <p class="ct">Ball Possession</p>
+    <div class="pbw">
+      <div class="pb"><div class="pba" id="d-pba" style="width:50%"></div><div class="pbb" id="d-pbb" style="width:50%"></div></div>
+      <div class="pb-lbs"><span class="pb-lb a" id="d-l1">Tim 1 &#8212; 50%</span><span class="pb-lb b" id="d-l2">50% &#8212; Tim 2</span></div>
+    </div>
+  </div>
+  <div class="at" id="d-at">Memuat analisis&#8230;</div>
+</div>
+
+<!-- PAGE 5: UPDATE -->
+<div class="pg" id="pg-upd">
+  <div class="bc"><a onclick="go('out')">Football Analytic Outputs</a><span class="bc-s">&#8250;</span><a onclick="go('det')" id="bc-u">Detail</a><span class="bc-s">&#8250;</span><span>Update</span></div>
+  <div class="dh">
+    <div><h1 class="ph-t">Update Section</h1><p class="ph-s">Perbarui informasi rekaman analisis</p></div>
+    <div class="da">
+      <button class="btn bg2 bsm" onclick="go('det')">Cancel</button>
+      <button class="btn bp bsm" onclick="doUpdate()">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>Submit
+      </button>
+    </div>
+  </div>
+  <div class="card">
+    <p class="ct">Edit Video Data Form</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <div class="fg"><label class="fl">Nama Video <span style="color:var(--ro)">*</span></label><input class="fi" id="u-vn" type="text" placeholder="Nama video&#8230;"></div>
+        <div class="fg"><label class="fl">Tim 1 &#8212; Home</label><input class="fi" id="u-t1" type="text" placeholder="Nama tim home&#8230;"></div>
+        <div class="fg"><label class="fl">Tim 2 &#8212; Away</label><input class="fi" id="u-t2" type="text" placeholder="Nama tim away&#8230;"></div>
+      </div>
+      <div>
+        <div class="fg"><label class="fl">Kompetisi / Liga</label><input class="fi" id="u-comp" type="text" placeholder="Nama kompetisi&#8230;"></div>
+        <div class="fg"><label class="fl">Stadium / Venue</label><input class="fi" id="u-ven" type="text" placeholder="Nama stadium&#8230;"></div>
+        <div class="fg"><label class="fl">Catatan</label><textarea class="fta" id="u-notes" placeholder="Catatan analisis&#8230;"></textarea><p class="fn">Ditampilkan di halaman detail.</p></div>
+      </div>
+    </div>
+    <div class="al al-ok" id="u-ok" style="margin-top:0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>Data berhasil diperbarui.</div>
+    <div class="al al-er" id="u-er" style="margin-top:0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg><span id="u-er-t">Gagal.</span></div>
+  </div>
+</div>
+
+</main>
+
+<!-- MODAL DELETE -->
+<div class="mo" id="mo-del">
+  <div class="md">
+    <button class="md-x" onclick="closeMo('mo-del')">&#215;</button>
+    <div style="width:40px;height:40px;background:#fee2e2;border-radius:9px;display:flex;align-items:center;justify-content:center;margin-bottom:12px">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#b91c1c" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+    </div>
+    <h2 class="md-t">Hapus Rekaman?</h2>
+    <p class="md-s">Video dan seluruh hasil analisis akan dihapus permanen. Tindakan ini tidak dapat dibatalkan.</p>
+    <div class="md-r">
+      <button class="btn bg2" style="flex:1;justify-content:center" onclick="closeMo('mo-del')">Batal</button>
+      <button class="btn bd" style="flex:1;justify-content:center" onclick="doDel()">Ya, Hapus</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════
+   STATE
+══════════════════════════════════════════ */
+let curId=null, pollTmr=null;
+
+/* ══════════════════════════════════════════
+   NAVIGATION
+══════════════════════════════════════════ */
+const NMAP={upload:'ni-upload',result:'ni-upload',out:'ni-out',det:'ni-out',upd:'ni-out'};
+function go(p){
+  document.querySelectorAll('.pg').forEach(x=>x.classList.remove('on'));
+  document.querySelectorAll('.ni').forEach(x=>x.classList.remove('on'));
+  document.getElementById('pg-'+p)?.classList.add('on');
+  document.getElementById(NMAP[p]||'ni-upload')?.classList.add('on');
+  if(p==='out') loadOut(1);
+}
+
+/* ══════════════════════════════════════════
+   UPLOAD
+══════════════════════════════════════════ */
+const uz=document.getElementById('uz'), fi=document.getElementById('fi');
+uz.addEventListener('dragover',e=>{e.preventDefault();uz.classList.add('dv')});
+uz.addEventListener('dragleave',()=>uz.classList.remove('dv'));
+uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('dv');if(e.dataTransfer.files[0])setFile(e.dataTransfer.files[0])});
+fi.addEventListener('change',e=>{if(e.target.files[0])setFile(e.target.files[0])});
+
+function setFile(f){
+  document.getElementById('fp-nm').textContent=f.name;
+  document.getElementById('fp-sz').textContent=(f.size/1024/1024).toFixed(1)+' MB';
+  document.getElementById('fp').classList.add('sh');
+  document.getElementById('apply-btn').disabled=false;
+  hideAl();
+}
+function rmFile(){
+  document.getElementById('fp').classList.remove('sh');
+  document.getElementById('apply-btn').disabled=true;
+  document.getElementById('pw').classList.remove('sh');
+  fi.value=''; hideAl();
+}
+function hideAl(){['al-ok','al-er'].forEach(id=>document.getElementById(id).classList.remove('sh'));}
+
+async function doUpload(){
+  const f=fi.files[0]; if(!f){showE('al-er','al-er-t','Pilih file terlebih dahulu.');return;}
+  const btn=document.getElementById('apply-btn');
+  btn.disabled=true;
+  btn.innerHTML='<span class="spin"></span> Mengupload\u2026';
+  hideAl(); document.getElementById('pw').classList.add('sh');
+  const fd=new FormData();
+  fd.append('video',f);
+  fd.append('video_name',document.getElementById('in-vn').value||f.name);
+  fd.append('team1',document.getElementById('in-t1').value||'Tim 1');
+  fd.append('team2',document.getElementById('in-t2').value||'Tim 2');
+  try{
+    const r=await fetch('/api/upload',{method:'POST',body:fd});
+    const d=await r.json();
+    const SVG_PLAY='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
+    if(d.success){
+      curId=d.video_id;
+      btn.innerHTML=SVG_PLAY+'Apply Model';
+      animSteps(0); pollStart(d.video_id);
+    } else {
+      showE('al-er','al-er-t',d.message);
+      btn.disabled=false; btn.innerHTML=SVG_PLAY+'Apply Model';
+    }
+  }catch(e){
+    showE('al-er','al-er-t','Koneksi gagal. Coba lagi.');
+    btn.disabled=false;
+    btn.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>Apply Model';
+  }
+}
+
+const STEPS=[['sp1','Deteksi Objek\u2026'],['sp2','Tracking\u2026'],['sp3','Klasifikasi Tim\u2026'],['sp4','Bird Eye View\u2026'],['sp5','Analisis Statistik\u2026']];
+function animSteps(i){
+  if(i>=STEPS.length) return;
+  if(i>0) document.getElementById(STEPS[i-1][0]).className='sp done';
+  document.getElementById(STEPS[i][0]).className='sp act';
+  document.getElementById('pw-lb').textContent=STEPS[i][1];
+  const p=Math.round((i+1)/STEPS.length*88);
+  document.getElementById('pf').style.width=p+'%';
+  document.getElementById('pw-pc').textContent=p+'%';
+  setTimeout(()=>animSteps(i+1),800+Math.random()*500);
+}
+
+function pollStart(vid){
+  if(pollTmr) clearInterval(pollTmr);
+  pollTmr=setInterval(async()=>{
+    try{
+      const r=await fetch('/api/video/'+vid);
+      const d=await r.json();
+      document.getElementById('pf').style.width=(d.progress_pct||0)+'%';
+      document.getElementById('pw-pc').textContent=(d.progress_pct||0)+'%';
+      if(d.status==='done'){
+        clearInterval(pollTmr);
+        STEPS.forEach(([id])=>document.getElementById(id).className='sp done');
+        document.getElementById('pw-lb').textContent='Selesai!';
+        document.getElementById('pf').style.width='100%';
+        document.getElementById('pw-pc').textContent='100%';
+        document.getElementById('al-ok').classList.add('sh');
+        document.getElementById('al-ok-t').innerHTML='Analisis selesai! <a href="#" onclick="openDet('+vid+',true)">Lihat Hasil \u2192</a>';
+        loadBadge();
+        setTimeout(()=>openDet(vid,true),800);
+      } else if(d.status==='error'){
+        clearInterval(pollTmr);
+        showE('al-er','al-er-t','Gagal: '+d.error_msg);
+        document.getElementById('apply-btn').disabled=false;
+      }
+    }catch(e){}
+  },3000);
+}
+
+/* ══════════════════════════════════════════
+   OUTPUT LIST
+══════════════════════════════════════════ */
+async function loadOut(page){
+  page=page||1;
+  const q=encodeURIComponent(document.getElementById('sq')?.value||'');
+  const st=document.getElementById('ss')?.value||'';
+  try{
+    const r=await fetch('/api/videos?page='+page+'&limit=12&q='+q+'&status='+st);
+    const d=await r.json();
+    document.getElementById('tc').textContent=d.total||0;
+    document.getElementById('ni-b').textContent=d.total||0;
+    const g=document.getElementById('vg');
+    if(!d.videos||!d.videos.length){
+      g.innerHTML='<div class="es" style="grid-column:1/-1"><svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M15 10l4.55-2.277A1 1 0 0121 8.65v6.7a1 1 0 01-1.45.897L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg><h3>Belum ada video</h3><p>Upload video untuk memulai analisis.</p></div>';
+      document.getElementById('pgb').innerHTML=''; return;
+    }
+    const sL={done:'Selesai',processing:'Diproses\u2026',queued:'Antrian',error:'Error'};
+    g.innerHTML=d.videos.map(v=>{
+      const dur=v.duration_sec?Math.floor(v.duration_sec/60)+'m '+v.duration_sec%60+'s':'\u2014';
+      return '<div class="vc" onclick="openDet('+v.video_id+')"><div class="vth"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M15 10l4.55-2.277A1 1 0 0121 8.65v6.7a1 1 0 01-1.45.897L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg><span>Output Video</span></div><div class="vcb"><p class="vc-nm">'+esc(v.video_name)+'</p><p class="vc-mt"><span>'+esc(v.team1_name||'\u2014')+' vs '+esc(v.team2_name||'\u2014')+'</span><span>'+dur+'</span><span>'+esc(v.resolution||'\u2014')+'</span><span><span class="sd s-'+v.status+'"></span>'+(sL[v.status]||v.status)+'</span></p></div></div>';
+    }).join('');
+    const pages=Math.ceil(d.total/12);
+    const pb=document.getElementById('pgb');
+    if(pages<=1){pb.innerHTML='';return;}
+    pb.innerHTML=Array.from({length:pages},(_,i)=>'<button class="btn '+(i+1===page?'bp':'bg2')+' bsm" onclick="loadOut('+(i+1)+')">'+(i+1)+'</button>').join('');
+  }catch(e){console.error(e);}
+}
+
+async function loadBadge(){
+  try{const r=await fetch('/api/videos?limit=1');const d=await r.json();document.getElementById('ni-b').textContent=d.total||0;}catch(e){}
+}
+
+/* ══════════════════════════════════════════
+   DETAIL
+══════════════════════════════════════════ */
+async function openDet(vid,isResult){
+  curId=vid;
+  try{
+    const r=await fetch('/api/video/'+vid);
+    const d=await r.json();
+    fillDet(d,!!isResult);
+    go(isResult?'result':'det');
+  }catch(e){console.error(e);}
+}
+
+function fillDet(d,isResult){
+  const res=d.result||{};
+  const t1=d.team1_name||'Tim 1', t2=d.team2_name||'Tim 2';
+  const dur=d.duration_sec?Math.floor(d.duration_sec/60)+'m '+d.duration_sec%60+'s':'\u2014';
+  const p1=res.ball_posession_home||50, p2=res.ball_posession_away||50;
+  if(isResult){
+    sT('r-vn',d.video_name); sT('r-meta',t1+' vs '+t2+' \u00b7 '+dur+' \u00b7 '+(d.resolution||'\u2014'));
+    sT('r-time',res.processing_time_sec?'Diproses '+res.processing_time_sec+'s':'');
+    sT('r-p1',p1.toFixed(1)); sT('r-p2',p2.toFixed(1));
+    sT('r-bm',res.ball_speed_max_kmh||'\u2014'); sT('r-ba',res.ball_speed_avg_kmh||'\u2014');
+    sT('r-ps',res.total_passes||'\u2014'); sT('r-fr',res.total_frames||'\u2014');
+    setPoss('r-pba','r-pbb','r-l1','r-l2',p1,p2,t1,t2);
+    if(res.anotated_video_path){
+      document.getElementById('r-vpb').innerHTML='<video controls style="width:100%;border-radius:11px;max-height:380px" src="/outputs/'+d.video_id+'/annotated.mp4"></video>';
+    }
+    document.getElementById('r-at').innerHTML=buildAT(d,res);
+  } else {
+    document.getElementById('bc-d').textContent=d.video_name;
+    document.getElementById('bc-u').textContent=d.video_name;
+    sT('d-t',d.video_name); sT('d-tm',t1+' vs '+t2);
+    sT('d-du',dur); sT('d-re',d.resolution||'\u2014'); sT('d-da',d.uploaded_at||'\u2014');
+    sT('d-p1',p1.toFixed(1)); sT('d-p2',p2.toFixed(1));
+    sT('d-bm',res.ball_speed_max_kmh||'\u2014'); sT('d-ba',res.ball_speed_avg_kmh||'\u2014');
+    sT('d-pm',res.player_speed_max_kmh||'\u2014'); sT('d-ps',res.total_passes||'\u2014');
+    sT('d-fr',res.total_frames||'\u2014'); sT('d-pt',res.processing_time_sec||'\u2014');
+    setPoss('d-pba','d-pbb','d-l1','d-l2',p1,p2,t1,t2);
+    sT('d-hm1-lb','Heatmap '+t1); sT('d-hm2-lb','Heatmap '+t2);
+    if(res.anotated_video_path){
+      document.getElementById('d-vpb').innerHTML='<video controls style="width:100%;border-radius:11px;max-height:380px" src="/outputs/'+d.video_id+'/annotated.mp4"></video>';
+    }
+    if(res.heatmap_home_path){
+      document.getElementById('d-hm1').innerHTML='<img src="/outputs/'+d.video_id+'/heatmap_home.png" style="width:100%;border-radius:10px">';
+    }
+    if(res.heatmap_away_path){
+      document.getElementById('d-hm2').innerHTML='<img src="/outputs/'+d.video_id+'/heatmap_away.png" style="width:100%;border-radius:10px">';
+    }
+    document.getElementById('d-at').innerHTML=buildAT(d,res);
+    document.getElementById('u-vn').value=d.video_name||'';
+    document.getElementById('u-t1').value=d.team1_name||'';
+    document.getElementById('u-t2').value=d.team2_name||'';
+  }
+}
+
+function buildAT(d,res){
+  if(!res||!res.analysis_id) return 'Analisis belum tersedia atau sedang diproses.';
+  const t1=d.team1_name||'Tim 1', t2=d.team2_name||'Tim 2';
+  const p1=res.ball_posession_home||50, p2=res.ball_posession_away||50;
+  return 'Hasil analisis menunjukkan <strong>'+t1+'</strong> mendominasi penguasaan bola dengan <strong>'+p1.toFixed(1)+'%</strong> berbanding <strong>'+p2.toFixed(1)+'%</strong> milik <strong>'+t2+'</strong>. Kecepatan bola maksimum tercatat <strong>'+(res.ball_speed_max_kmh||'\u2014')+' km/h</strong> dengan rata-rata <strong>'+(res.ball_speed_avg_kmh||'\u2014')+' km/h</strong>.<br><br>Total <strong>'+(res.total_passes||0)+' passing</strong> terdeteksi. Model <strong>'+(res.model_name||'RF-DETR Base')+'</strong> dengan tracking <strong>'+(res.tracking_method||'ByteTrack')+'</strong> memproses <strong>'+(res.total_frames||'\u2014')+' frame</strong> dalam waktu <strong>'+(res.processing_time_sec||'\u2014')+' detik</strong>.<br><br>Kecepatan pemain tertinggi tercatat <strong>'+(res.player_speed_max_kmh||'\u2014')+' km/h</strong>.';
+}
+
+function setPoss(idA,idB,lA,lB,p1,p2,t1,t2){
+  document.getElementById(idA).style.width=p1+'%';
+  document.getElementById(idB).style.width=p2+'%';
+  document.getElementById(lA).textContent=t1+' \u2014 '+p1.toFixed(1)+'%';
+  document.getElementById(lB).textContent=p2.toFixed(1)+'% \u2014 '+t2;
+}
+
+/* ══════════════════════════════════════════
+   UPDATE
+══════════════════════════════════════════ */
+async function doUpdate(){
+  const vn=document.getElementById('u-vn').value.trim();
+  if(!vn){showE('u-er','u-er-t','Nama video wajib diisi.');return;}
+  ['u-ok','u-er'].forEach(id=>document.getElementById(id).classList.remove('sh'));
+  try{
+    const r=await fetch('/api/video/'+curId,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_name:vn,team1_name:document.getElementById('u-t1').value,team2_name:document.getElementById('u-t2').value})});
+    const d=await r.json();
+    if(d.success){document.getElementById('u-ok').classList.add('sh');setTimeout(()=>{go('det');openDet(curId);},600);}
+    else showE('u-er','u-er-t',d.message);
+  }catch(e){showE('u-er','u-er-t','Koneksi gagal.');}
+}
+
+/* ══════════════════════════════════════════
+   DELETE
+══════════════════════════════════════════ */
+function openDel(){document.getElementById('mo-del').classList.add('op');}
+function closeMo(id){document.getElementById(id).classList.remove('op');}
+async function doDel(){
+  closeMo('mo-del');
+  try{
+    const r=await fetch('/api/video/'+curId,{method:'DELETE'});
+    const d=await r.json();
+    if(d.success){go('out');loadBadge();}
+    else alert('Gagal menghapus: '+d.message);
+  }catch(e){alert('Koneksi gagal.');}
+}
+
+/* ══════════════════════════════════════════
+   HELPERS
+══════════════════════════════════════════ */
+function sT(id,val){const e=document.getElementById(id);if(e)e.textContent=val??'\u2014';}
+function showE(aid,tid,msg){document.getElementById(aid).classList.add('sh');const t=document.getElementById(tid);if(t)t.textContent=msg;}
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+
+// Init
+loadBadge();
+</script>
+</body>
+</html>
