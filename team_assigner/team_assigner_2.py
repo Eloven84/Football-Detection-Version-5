@@ -7,22 +7,38 @@ from sklearn.cluster import KMeans
 # PREDEFINED TEAM COLORS  (format RGB)
 # ============================================================
 
-## video 08fd33_4
+## video input_1: biru tua vs biru muda
 TEAM_COLORS = {
     1: {
-        'player':     np.array([234, 243, 247]),  # biru/putih pucat
-        'goalkeeper': np.array([206, 130,  99]),  # oranye/coklat
+        'player':     np.array([ 51,  64, 109]),   # RGB: navy blue
+        'goalkeeper': np.array([189,  76, 128]),   # RGB: pink/magenta
     },
     2: {
-        'player':     np.array([175, 249, 141]),  # hijau lime
-        'goalkeeper': np.array([206, 130,  99]),
+        'player':     np.array([118, 148, 196]),   # RGB: light blue
+        'goalkeeper': np.array([189,  76, 128]),   # RGB: sama dengan GK team 1
     }
 }
 
+## video 08fd33_4
+# TEAM_COLORS = {
+#     1: {
+#         'player':     np.array([234, 243, 247]),  # biru/putih pucat
+#         'goalkeeper': np.array([206, 130,  99]),  # oranye/coklat
+#     },
+#     2: {
+#         'player':     np.array([175, 249, 141]),  # hijau lime
+#         'goalkeeper': np.array([206, 130,  99]),
+#     }
+# }
+
 # Warna anotasi BGR — kontras terhadap lapangan hijau
+# ANNOTATION_COLORS_BGR = {
+#     1: (247, 243,  234),   # oranye terang
+#     2: (141, 249,  175),   # hijau lime cerah
+# }
 ANNOTATION_COLORS_BGR = {
-    1: (247, 243,  234),   # oranye terang
-    2: (141, 249,  175),   # hijau lime cerah
+    1: (109, 64,  51),   # navy blue (dibalik dari RGB)
+    2: (196, 148,  118),   # light blue (dibalik dari RGB)
 }
 
 
@@ -134,10 +150,10 @@ class TeamAssigner:
                 if self.assign_team_by_color(colors) == -1:
                     unassigned += 1
 
-        self.team_colors = {
-            1: (247, 243,  234), # BGR untuk team 1 (biru/putih pucat)
-            2: (141, 249,  175)   # BGR untuk team 2 (Hijau Lime)
-        }
+        # self.team_colors = {
+        #     1: (247, 243,  234), # BGR untuk team 1 (biru/putih pucat)
+        #     2: (141, 249,  175)   # BGR untuk team 2 (Hijau Lime)
+        # }
 
         print(f"[TeamAssigner] Diagnostik: {unassigned} deteksi tidak bisa di-assign dari sample.")
 

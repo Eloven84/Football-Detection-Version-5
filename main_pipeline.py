@@ -21,18 +21,8 @@ main.py
 Pipeline utama: Video → Tracking → Homography → Tactical Map → Output Video
 """
 
-# ═══════════════════════════════════════════════════════════════════
-# INTEGRASI HeatmapAnalyzer ke main.py
-# Tambahkan bagian-bagian ini ke main.py yang sudah ada
-# ═══════════════════════════════════════════════════════════════════
-
-# ═══════════════════════════════════════════════════════════════════
-# INTEGRASI ZoneAnalyzer ke main.py
-# ═══════════════════════════════════════════════════════════════════
-
 import os
 import cv2
-import json
 import numpy as np
 
 from trackers                     import Tracker
@@ -45,8 +35,6 @@ from keypoint_detector            import KeypointDetector
 from homography                   import HomographyCalculator
 from tactical_map                 import TacticalMapRenderer
 from utils                        import read_video, save_video
-from heatmap_analyzer             import HeatmapAnalyzer  # Import HeatmapAnalyzer
-from zone_analyzer                import ZoneAnalyzer     # Import ZoneAnalyzer
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -159,32 +147,7 @@ def main() -> None:
     # ── 7.5. Ball trajectory — pre-pass + smooth ─────────────────────────────
     print("[main] Computing ball trajectory...")
 
-    renderer= TacticalMapRenderer()
-
-    # ── Inisialisasi (setelah TacticalMapRenderer dibuat) ────────────
-    heatmap_analyzer = HeatmapAnalyzer(
-        canvas_w=960,        # sama dengan TacticalMapRenderer
-        canvas_h=560,
-        gaussian_radius=25,  # naikkan untuk heatmap lebih smooth
-        output_scale=2.0,    # output 2× lebih besar dari canvas (1920×1120)
-    )
-
-    # ── Inisialisasi — letakkan setelah renderer = TacticalMapRenderer() ──
-    zone_analyzer = ZoneAnalyzer(
-        canvas_w=960,
-        canvas_h=560,
-        grid_cols=6,      # lapangan dibagi 6×4 = 24 zona
-        grid_rows=4,
-        output_scale=2.0,
-        player_weight=1.0,
-        ball_weight=2.0,  # bola diberi bobot 2× lebih tinggi dari pemain
-    )
-
-    # Kalau kamu mau analisis per babak, definisikan batas frame-nya di sini.
-    # Sesuaikan dengan video kamu (misal: 750 frame total, babak 1 = 0–374).
-    # BABAK_1_END   = 374   # frame terakhir babak 1
-    # BABAK_2_START = 375   # frame pertama babak 2
-
+    renderer        = TacticalMapRenderer()
     homography_calc = HomographyCalculator(min_keypoints=4)
 
     # Pass 1: kumpulkan posisi bola mentah di canvas
@@ -199,7 +162,7 @@ def main() -> None:
         if ball_frm:
             bpos = ball_frm[1].get("position_adjusted") or ball_frm[1].get("position")
             if bpos:
-                candidate = hc_pass1.transform_point(
+                candidate = homography_calc.transform_point(
                     bpos, H,
                     canvas_w=renderer.canvas_w,
                     canvas_h=renderer.canvas_h,
@@ -293,60 +256,9 @@ def main() -> None:
             ball_position=ball_trail_smooth[frame_num],
             ball_trail=ball_trail_smooth[: frame_num + 1],
         )
-        # ── Collect per frame (di dalam loop build tactical frames) ───────\
-        heatmap_analyzer.collect(
-            frame_num=frame_num,
-            tracks=tracks,
-            homography_calc=homography_calc,
-            keypoints=kp,
-            team_ball_control=team_ball_control,
-        )
-        # ── Collect — letakkan di dalam loop tactical frames (step 8) ─
-        zone_analyzer.collect(
-            frame_num=frame_num,
-            tracks=tracks,
-            homography_calc=homography_calc,
-            keypoints=kp,
-            ball_map_pos=ball_trail_smooth[frame_num],   # posisi bola smooth
-        )
         tactical_frames.append(tac_frame)
 
     print(f"[HomographyCalculator] H updates: {homography_calc.update_count}")
-
-    # ── Save semua output setelah loop selesai ────────────────────────
-    video_name = os.path.basename(VIDEO_PATH).replace(".mp4", "")
-    
-    saved_files = heatmap_analyzer.save_all(
-        output_dir="output_analysis",
-        video_name=video_name,
-        fmt="png",       # ganti ke "jpg" kalau mau file lebih kecil
-    )
-
-    # ── Save — letakkan setelah loop tactical frames selesai ──────
-    video_name = os.path.basename(VIDEO_PATH).replace(".mp4", "")
-    
-    # Keseluruhan video
-    zone_files = zone_analyzer.save_all(
-        output_dir="output_analysis",
-        video_name=video_name,
-        fmt="png",
-    )
-    
-    # # Per babak (opsional — hapus kalau tidak butuh)
-    # zone_analyzer.save_segment(
-    #     output_dir="output_analysis",
-    #     segment_name=f"{video_name}_babak1",
-    #     frame_start=0,
-    #     frame_end=BABAK_1_END,
-    #     fmt="png",
-    # )
-    # zone_analyzer.save_segment(
-    #     output_dir="output_analysis",
-    #     segment_name=f"{video_name}_babak2",
-    #     frame_start=BABAK_2_START,
-    #     frame_end=None,   # sampai frame terakhir
-    #     fmt="png",
-    # )
 
     # ── 9. Annotasi video utama ──────────────────────────────────────────────
     output_frames = tracker.draw_annotations(video_frames, tracks, team_ball_control)
@@ -368,40 +280,10 @@ def main() -> None:
     ]
 
     # ── 11. Simpan output ────────────────────────────────────────────────────
-    output_name = os.path.basename(VIDEO_PATH).replace(".mp4", "_test_output.mp4")
+    output_name = os.path.basename(VIDEO_PATH).replace(".mp4", "_output.mp4")
     output_path = os.path.join(OUTPUT_DIR, output_name)
     save_video(combined_frames, output_path)
     print(f"[main] Saved → {output_path}")
-
-    # Print summary stats ke console
-    stats = heatmap_analyzer.get_summary_stats()
-    print("\n" + "="*50)
-    print("SUMMARY ANALISIS")
-    print("="*50)
-    print(f"Total frame dianalisis : {stats['total_frames_analyzed']}")
-    print(f"Ball Possession        : Tim 1 {stats['ball_possession']['team1_pct']}%"
-        f" | Tim 2 {stats['ball_possession']['team2_pct']}%")
-    print(f"Zone Coverage          : Tim 1 {stats['zone_coverage']['team1_pct']}%"
-        f" | Tim 2 {stats['zone_coverage']['team2_pct']}%")
-    print(f"Data points posisi     : Tim 1 {stats['position_datapoints']['team1']}"
-        f" | Tim 2 {stats['position_datapoints']['team2']}")
-    print("="*50)
-    print(f"Output tersimpan di  : output_analysis/{video_name}_*.png")
-
-    # ── 5. Print stats zona ke console ───────────────────────────────
-    with open(zone_files["zone_stats"]) as f:
-        zstats = json.load(f)
-    
-    print("\n" + "="*50)
-    print("ZONE CONTROL SUMMARY")
-    print("="*50)
-    print(f"Pixel dominance  : Tim 1 {zstats['pixel_dominance']['team1_pct']}%"
-        f" | Tim 2 {zstats['pixel_dominance']['team2_pct']}%")
-    print(f"Grid zona dikuasai: Tim 1 {zstats['grid_zone_dominance']['team1_zones']}"
-        f" zona ({zstats['grid_zone_dominance']['team1_pct']}%)"
-        f" | Tim 2 {zstats['grid_zone_dominance']['team2_zones']}"
-        f" zona ({zstats['grid_zone_dominance']['team2_pct']}%)")
-    print("="*50)
 
 
 if __name__ == "__main__":

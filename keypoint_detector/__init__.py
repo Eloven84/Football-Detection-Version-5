@@ -1,1 +1,1 @@
-from .keypoint_detector_Soccana import KeypointDetector
+from .keypoint_det_soccana import KeypointDetector

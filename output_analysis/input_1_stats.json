@@ -1,0 +1,16 @@
+{
+  "total_frames_analyzed": 819,
+  "ball_possession": {
+    "team1_pct": 5.7,
+    "team2_pct": 94.3,
+    "no_possession_pct": 0.0
+  },
+  "zone_coverage": {
+    "team1_pct": 0.0,
+    "team2_pct": 0.0
+  },
+  "position_datapoints": {
+    "team1": 6494,
+    "team2": 7854
+  }
+}

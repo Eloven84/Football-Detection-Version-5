@@ -46,7 +46,7 @@ def is_valid_map_pos(pos, canvas_w, canvas_h, margin=10):
 #                 smoothed.append(None)
 #         return smoothed
 
-def smooth_ball_trail(positions, window=9, max_jump_px=80):
+def smooth_ball_trail(positions, window=9, max_jump_px=50):
     """Smooth + filter lompatan ekstrem."""
     # Filter lompatan ekstrem dulu sebelum smooth
     filtered = []
@@ -79,7 +79,7 @@ def smooth_ball_trail(positions, window=9, max_jump_px=80):
     return smoothed
 
 def main():
-    video_path = 'input_video/08fd33_4.mp4'
+    video_path = 'input_video/input_1.mp4'
 
     # ── 1. Read Video ────────────────────────────────────────────────────────
     video_frames = read_video(video_path)
@@ -90,11 +90,12 @@ def main():
     stub_path = f"stubs/{stub_name}"
 
     tracker = Tracker(
-        r'models/RFDETR Result Dataset With Augmentation Version 2/checkpoint_best_total.pth'
+        model_path=r'models/RFDETR Result Dataset With Augmentation Version 2/checkpoint_best_total.pth',
+        ball_model_path=r'models/best_yolo8m_ball-detection.pt'
     )
     tracks = tracker.get_object_tracks(
         video_frames,
-        read_from_stub=True,
+        read_from_stub=False,
         stub_path=stub_path
     )
     tracks['ball'] = tracker.interpolate_ball_positions(tracks['ball'])
@@ -159,13 +160,16 @@ def main():
 
     # ── 7. Keypoint Detection & Homography ──────────────────────────────────
     keypoint_detector = KeypointDetector(
-        api_key="z5JXv6j0AT4yg2hwaKGq",
-        confidence_threshold=0.5
+        model_path='models/best_roboflow_keypoints_detection.pt',
+        confidence_threshold=0.3    # sesuaikan rekomendasi model
     )
+    all_H = []
     homography_calc = HomographyCalculator(
-        min_keypoints=4,   
+        min_keypoints=4,
         common_kp_threshold=4,
-        movement_threshold=2
+        movement_threshold=2,
+        max_reproj_error=80.0,  # FIX 2: naik dari 30 → 50 untuk toleransi error yang lebih besar
+        max_reuse_frames=60     # dari default 30 → 60 untuk lebih banyak frame pakai H yang sama jika deteksi keypoint sulit
     )
     tactical_renderer = TacticalMapRenderer()
 
@@ -189,14 +193,24 @@ def main():
         
         all_keypoints_dict.append(filtered)
 
-    # Debug: visualisasi keypoint frame 0
-    debug_frame = video_frames[683].copy()
-    for idx, (x, y) in all_keypoints_dict[683].items():
-        cv2.circle(debug_frame, (x, y), 6, (0, 255, 0), -1)
-        cv2.putText(debug_frame, str(idx), (x+5, y-5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
-    cv2.imwrite("debug_keypoints_frame683.jpg", debug_frame)
-    print("[DEBUG] Saved debug_keypoints_frame683.jpg")
+    for debug_idx in [0, 100, 300, 500]:
+        debug_frame = video_frames[debug_idx].copy()
+        kps = all_keypoints_dict[debug_idx]
+        print(f"[DEBUG] Frame {debug_idx}: {len(kps)} keypoints → IDs: {list(kps.keys())}")
+        for idx, (x, y) in kps.items():
+            cv2.circle(debug_frame, (x, y), 6, (0, 255, 0), -1)
+            cv2.putText(debug_frame, str(idx), (x+5, y-5),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
+        cv2.imwrite(f"debug_keypoints_frame{debug_idx}.jpg", debug_frame)
+    # DEBUG: cek distribusi jumlah keypoint per frame
+    kp_counts = [len(kp) for kp in all_keypoints_dict]
+    print(f"[DEBUG] Keypoints per frame — min: {min(kp_counts)}, max: {max(kp_counts)}, mean: {np.mean(kp_counts):.1f}")
+    print(f"[DEBUG] Frame dengan >= 4 KP: {sum(1 for c in kp_counts if c >= 4)}/{len(kp_counts)}")
+    print(f"[DEBUG] Frame dengan 0 KP: {sum(1 for c in kp_counts if c == 0)}/{len(kp_counts)}")
+
+    # Lihat frame mana yang punya banyak KP
+    best_frames = sorted(enumerate(kp_counts), key=lambda x: -x[1])[:5]
+    print(f"[DEBUG] 5 frame terbaik: {best_frames}")
 
     # ══════════════════════════════════════════════════════════════════════
     # ── 7.5 BARU: Kumpulkan semua ball map pos & smooth ──────────────────
@@ -205,27 +219,22 @@ def main():
 
     # Pass pertama: hitung H dan kumpulkan semua posisi bola
     all_ball_map_pos = []
-    homography_calc_pass1 = HomographyCalculator(
-        min_keypoints=4,
-        common_kp_threshold=4,
-        movement_threshold=2
-    )
     for frame_num in range(len(video_frames)):
         current_kp = all_keypoints_dict[frame_num]
-        H = homography_calc_pass1.get_homography(current_kp)
+        H = homography_calc.get_homography(current_kp)
+        all_H.append(H)  # ← simpan
 
         ball_frame = tracks['ball'][frame_num]
         ball_pos = None
         if ball_frame:
             bpos = ball_frame[1].get('position_adjusted') or ball_frame[1].get('position')
             if bpos:
-                bp = homography_calc_pass1.transform_point(bpos, H)
-                if is_valid_map_pos(bp, tactical_renderer.canvas_w,
-                                    tactical_renderer.canvas_h):
+                bp = homography_calc.transform_point(bpos, H)
+                if is_valid_map_pos(bp, tactical_renderer.canvas_w, tactical_renderer.canvas_h):
                     ball_pos = bp
         all_ball_map_pos.append(ball_pos)
 
-    all_ball_map_pos_smooth = smooth_ball_trail(all_ball_map_pos, window=9)
+    all_ball_map_pos_smooth = smooth_ball_trail(all_ball_map_pos, window=15)
     print(f"Ball trajectory computed: {sum(1 for p in all_ball_map_pos_smooth if p)} valid positions")
 
     # ── 8. Build Tactical Map Per Frame ─────────────────────────────────────
@@ -233,7 +242,8 @@ def main():
 
     for frame_num in range(len(video_frames)):
         current_kp = all_keypoints_dict[frame_num]
-        H = homography_calc.get_homography(current_kp)  # ← pakai homography_calc utama
+        # H = homography_calc.get_homography(current_kp)  # ← pakai homography_calc utama
+        H = all_H[frame_num]  # ← pakai H yang sudah dihitung di pass pertama
 
         player_positions = {}
         for player_id, track in tracks['player'][frame_num].items():
@@ -304,8 +314,15 @@ def main():
         combined = np.hstack([output_video_frames[frame_num], divider, tac_resized])
         combined_frames.append(combined)
 
+    print(f"[DEBUG pass1] Collinear rejected: {getattr(homography_calc, '_col_count', 0)}")
+    print(f"[DEBUG pass1] RANSAC failed:      {getattr(homography_calc, '_ransac_fail_count', 0)}")
+    print(f"[DEBUG pass1] Reproj error fail:  {getattr(homography_calc, '_reproj_fail_count', 0)}")
+
+    # Tambahkan ini:
+    print(f"[DEBUG pass1] Valid H check fail: {getattr(homography_calc, '_valid_H_fail_count', 0)}")
+
     # ── 11. Save Output ──────────────────────────────────────────────────────
-    output_name = os.path.basename(video_path).replace('.mp4', '_output_roboflow.mp4')
+    output_name = os.path.basename(video_path).replace('.mp4', '_roboflow_output.mp4')
     save_video(combined_frames, f"output_videos/{output_name}")
     print(f"Saved to output_videos/{output_name}")
 

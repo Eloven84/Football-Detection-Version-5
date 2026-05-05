@@ -121,7 +121,7 @@ class Tracker:
             # ── Ball ──────────────────────────────────────────────────
             ball_yolo = None
             if self.ball_model is not None:
-                yolo_result = self.ball_model.predict(frames[frame_num], conf=0.5, verbose=False)[0]  # ← naikkan conf
+                yolo_result = self.ball_model.predict(frames[frame_num], conf=0.5, verbose=False, device='mps')[0]  # ← naikkan conf
                 best_conf = 0
                 for box in yolo_result.boxes:
                     conf = float(box.conf[0])

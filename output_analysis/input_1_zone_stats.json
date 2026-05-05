@@ -1,0 +1,185 @@
+{
+  "frames_analyzed": 819,
+  "ball_visible_frames": 819,
+  "pixel_dominance": {
+    "team1_pct": 35.9,
+    "team2_pct": 36.5
+  },
+  "grid_zone_dominance": {
+    "team1_zones": 10,
+    "team2_zones": 14,
+    "total_zones": 24,
+    "team1_pct": 41.7,
+    "team2_pct": 58.3
+  },
+  "zone_detail": [
+    {
+      "row": 0,
+      "col": 0,
+      "winner": 2,
+      "team1_pct": 0.0,
+      "team2_pct": 100.0
+    },
+    {
+      "row": 0,
+      "col": 1,
+      "winner": 1,
+      "team1_pct": 84.0,
+      "team2_pct": 16.0
+    },
+    {
+      "row": 0,
+      "col": 2,
+      "winner": 1,
+      "team1_pct": 53.1,
+      "team2_pct": 46.9
+    },
+    {
+      "row": 0,
+      "col": 3,
+      "winner": 2,
+      "team1_pct": 45.8,
+      "team2_pct": 54.2
+    },
+    {
+      "row": 0,
+      "col": 4,
+      "winner": 2,
+      "team1_pct": 17.0,
+      "team2_pct": 83.0
+    },
+    {
+      "row": 0,
+      "col": 5,
+      "winner": 1,
+      "team1_pct": 71.0,
+      "team2_pct": 29.0
+    },
+    {
+      "row": 1,
+      "col": 0,
+      "winner": 1,
+      "team1_pct": 81.5,
+      "team2_pct": 18.5
+    },
+    {
+      "row": 1,
+      "col": 1,
+      "winner": 1,
+      "team1_pct": 79.4,
+      "team2_pct": 20.6
+    },
+    {
+      "row": 1,
+      "col": 2,
+      "winner": 2,
+      "team1_pct": 38.9,
+      "team2_pct": 61.1
+    },
+    {
+      "row": 1,
+      "col": 3,
+      "winner": 2,
+      "team1_pct": 41.0,
+      "team2_pct": 59.0
+    },
+    {
+      "row": 1,
+      "col": 4,
+      "winner": 2,
+      "team1_pct": 41.4,
+      "team2_pct": 58.6
+    },
+    {
+      "row": 1,
+      "col": 5,
+      "winner": 2,
+      "team1_pct": 21.8,
+      "team2_pct": 78.2
+    },
+    {
+      "row": 2,
+      "col": 0,
+      "winner": 1,
+      "team1_pct": 100.0,
+      "team2_pct": 0.0
+    },
+    {
+      "row": 2,
+      "col": 1,
+      "winner": 1,
+      "team1_pct": 83.3,
+      "team2_pct": 16.7
+    },
+    {
+      "row": 2,
+      "col": 2,
+      "winner": 2,
+      "team1_pct": 47.0,
+      "team2_pct": 53.0
+    },
+    {
+      "row": 2,
+      "col": 3,
+      "winner": 2,
+      "team1_pct": 25.7,
+      "team2_pct": 74.3
+    },
+    {
+      "row": 2,
+      "col": 4,
+      "winner": 2,
+      "team1_pct": 43.8,
+      "team2_pct": 56.2
+    },
+    {
+      "row": 2,
+      "col": 5,
+      "winner": 2,
+      "team1_pct": 15.0,
+      "team2_pct": 85.0
+    },
+    {
+      "row": 3,
+      "col": 0,
+      "winner": 1,
+      "team1_pct": 100.0,
+      "team2_pct": 0.0
+    },
+    {
+      "row": 3,
+      "col": 1,
+      "winner": 1,
+      "team1_pct": 96.9,
+      "team2_pct": 3.1
+    },
+    {
+      "row": 3,
+      "col": 2,
+      "winner": 2,
+      "team1_pct": 35.6,
+      "team2_pct": 64.4
+    },
+    {
+      "row": 3,
+      "col": 3,
+      "winner": 2,
+      "team1_pct": 46.7,
+      "team2_pct": 53.3
+    },
+    {
+      "row": 3,
+      "col": 4,
+      "winner": 1,
+      "team1_pct": 54.1,
+      "team2_pct": 45.9
+    },
+    {
+      "row": 3,
+      "col": 5,
+      "winner": 2,
+      "team1_pct": 39.7,
+      "team2_pct": 60.3
+    }
+  ]
+}

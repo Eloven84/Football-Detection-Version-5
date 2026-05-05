@@ -1,1 +1,1 @@
-from .tactical_map_renderer_2 import TacticalMapRenderer 
+from .tactical_map_soccana import TacticalMapRenderer 
