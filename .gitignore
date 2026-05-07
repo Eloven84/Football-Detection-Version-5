@@ -1,0 +1,20 @@
+.vscode/
+.DS_Store
+__pycache__/
+*.pyc
+
+*.mp4
+*.jpg
+*.png
+*.pkl
+
+*.pt
+*.pth
+*.onnx
+*.ckpt
+
+input_video/
+models/
+runs/
+stubs/
+Dataset (Roboflow)/
