@@ -79,7 +79,11 @@ def smooth_ball_trail(positions, window=9, max_jump_px=50):
     return smoothed
 
 def main():
+<<<<<<< HEAD
     video_path = 'input_video/input_1.mp4'
+=======
+    video_path = 'input_video/08fd33_4.mp4'
+>>>>>>> bd1fd8f5b7f624cc10479119a1ab2a2c69be4c72
 
     # ── 1. Read Video ────────────────────────────────────────────────────────
     video_frames = read_video(video_path)
@@ -193,9 +197,14 @@ def main():
     # Debug: visualisasi keypoint frame 0
     debug_frame = video_frames[683].copy()
     for idx, (x, y) in all_keypoints_dict[683].items():
+<<<<<<< HEAD
         xi, yi = int(x), int(y)
         cv2.circle(debug_frame, (xi, yi), 6, (0, 255, 0), -1)
         cv2.putText(debug_frame, str(idx), (xi + 5, yi - 5),
+=======
+        cv2.circle(debug_frame, (x, y), 6, (0, 255, 0), -1)
+        cv2.putText(debug_frame, str(idx), (x+5, y-5),
+>>>>>>> bd1fd8f5b7f624cc10479119a1ab2a2c69be4c72
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
     cv2.imwrite("debug_keypoints_frame683.jpg", debug_frame)
     print("[DEBUG] Saved debug_keypoints_frame683.jpg")

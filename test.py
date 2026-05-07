@@ -56,7 +56,11 @@ from zone_analyzer                import ZoneAnalyzer     # Import ZoneAnalyzer
 VIDEO_PATH     = "input_video/input_1.mp4"
 TRACKER_MODEL  = "models/RFDETR Result Dataset With Augmentation Version 2/checkpoint_best_total.pth"
 BALL_MODEL     = "models/best_yolo8s_ball-detection.pt"
+<<<<<<< HEAD
 KP_MODEL       = "models/kpdet_best_final.pt"
+=======
+KP_MODEL       = "models/soccana_keypoint/Model/weights/kpdet_best_final.pt"
+>>>>>>> bd1fd8f5b7f624cc10479119a1ab2a2c69be4c72
 STUB_DIR       = "stubs"
 OUTPUT_DIR     = "output_videos"
 
