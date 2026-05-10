@@ -1,886 +1,810 @@
 """
 app.py
-Flask backend untuk Football Detection Dashboard.
+Flask backend untuk Football Detection & Analysis System.
+Calvin Institute of Technology — Tugas Akhir
 
-Endpoint:
-  POST /api/upload                — upload video + mulai proses analisis (background thread)
-  GET  /api/videos                — list semua video (paginasi, search, filter status)
-  GET  /api/video/<id>            — detail satu video + hasil analisis
-  PUT  /api/video/<id>            — update nama/tim video
-  DELETE /api/video/<id>          — hapus video + semua data analisis
-  GET  /api/image/<analysis_id>/<image_type>  — serve gambar dari BLOB database
-
-Database: MySQL via PyMySQL
-Run: python app.py
+Endpoints:
+  POST   /api/upload              — Upload video + mulai analisis (background thread)
+  GET    /api/videos              — List semua video (pagination, search, filter)
+  GET    /api/video/<id>          — Detail satu video + hasil analisis
+  PUT    /api/video/<id>          — Update metadata video
+  DELETE /api/video/<id>          — Hapus video + hasil
+  GET    /outputs/<id>/<filename> — Serve file output (video, heatmap, dll)
 """
 
 from __future__ import annotations
 
-import os
-os.environ.setdefault("OMP_NUM_THREADS", "1")  # Fix KMeans memory leak on Windows MKL
-
-import io
 import json
 import os
 import sys
-import threading
 import time
+import threading
 import traceback
 from datetime import datetime
 from pathlib import Path
 
 import cv2
-import pymysql
-import pymysql.cursors
-from flask import Flask, jsonify, request, send_file, send_from_directory
-from werkzeug.utils import secure_filename
+import mysql.connector
+from flask import Flask, request, jsonify, send_from_directory, g
+from flask_cors import CORS
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Konfigurasi
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Path setup ────────────────────────────────────────────────────────────────
+BASE_DIR    = Path(__file__).resolve().parent
+OUTPUT_DIR  = BASE_DIR / "outputs"
+UPLOAD_DIR  = BASE_DIR / "uploads"
+STUB_DIR    = BASE_DIR / "stubs"
 
-app = Flask(__name__, static_folder=".", static_url_path="")
+for d in (OUTPUT_DIR, UPLOAD_DIR, STUB_DIR):
+    d.mkdir(parents=True, exist_ok=True)
 
-# ── Folder lokal ──
-UPLOAD_FOLDER   = os.path.join(os.path.dirname(__file__), "input_video")
-OUTPUT_FOLDER   = os.path.join(os.path.dirname(__file__), "output_videos")
-ANALYSIS_FOLDER = os.path.join(os.path.dirname(__file__), "output_analysis")
-ALLOWED_EXTENSIONS = {"mp4", "avi", "mov", "mkv"}
+sys.path.insert(0, str(BASE_DIR))
 
-os.makedirs(UPLOAD_FOLDER,   exist_ok=True)
-os.makedirs(OUTPUT_FOLDER,   exist_ok=True)
-os.makedirs(ANALYSIS_FOLDER, exist_ok=True)
+# ── Import modul analisis ─────────────────────────────────────────────────────
+from trackers                     import Tracker
+from team_assigner                import TeamAssigner
+from team_ball_control            import TeamBallControl
+from player_ball_assigner         import PlayerBallAssigner
+from camera_movement_estimator    import CameraMovementEstimator
+from speed_and_distance_estimator import SpeedAndDistance_Estimator
+from keypoint_detector            import KeypointDetector
+from homography                   import HomographyCalculator
+from tactical_map                 import TacticalMapRenderer
+# from utils                        import read_video, save_video
+from heatmap_analyzer             import HeatmapAnalyzer  # Import HeatmapAnalyzer
+from zone_analyzer                import ZoneAnalyzer     # Import ZoneAnalyzer
 
-# ── MySQL config ──
+# ── Konstanta path model ──────────────────────────────────────────────────────
+RFDETR_WEIGHTS   = str(BASE_DIR / "models" / "RFDETR Result Dataset With Augmentation Version 2" / "checkpoint_best_total.pth")
+BALL_YOLO_WEIGHTS= str(BASE_DIR / "models" / "best_yolo8s_ball-detection.pt")
+KP_MODEL_PATH    = str(BASE_DIR / "models" / "kpdet_best_final.pt")
+
+# ── Flask app ─────────────────────────────────────────────────────────────────
+app = Flask(__name__)
+CORS(app)
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024 * 1024  # 2 GB
+
+# ── MySQL config — sesuaikan dengan environment kamu ──────────────────────────
 DB_CONFIG = {
-    "host":        "localhost",
-    "port":        3306,
-    "user":        "root",
-    "password":    "",           # ← isi password MySQL kamu
-    "db":          "soccana_football_detection",
-    "charset":     "utf8mb4",
-    "cursorclass": pymysql.cursors.DictCursor,
-    "autocommit":  True,
+    "host":     os.getenv("DB_HOST",     "localhost"),
+    "port":     int(os.getenv("DB_PORT", "3306")),
+    "user":     os.getenv("DB_USER",     "root"),
+    "password": os.getenv("DB_PASSWORD", ""),
+    "database": os.getenv("DB_NAME",     "football_detection_final"),
+    "charset":  "utf8mb4",
 }
-
-# ── Model path ──
-TRACKER_MODEL = "models/RFDETR Result Dataset With Augmentation Version 2/checkpoint_best_total.pth"
-BALL_MODEL    = "models/best_yolo8s_ball-detection.pt"
-KP_MODEL      = "models/kpdet_best_final.pt"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Database helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_db():
-    return pymysql.connect(**DB_CONFIG)
+def get_db() -> mysql.connector.MySQLConnection:
+    """Buka koneksi DB per-request (simpan di Flask g)."""
+    if "db" not in g:
+        g.db = mysql.connector.connect(**DB_CONFIG)
+    return g.db
 
 
-def db_execute(sql: str, args=None, fetch: str = "none"):
-    conn = get_db()
+@app.teardown_appcontext
+def close_db(exc=None):
+    db = g.pop("db", None)
+    if db is not None and db.is_connected():
+        db.close()
+
+
+def query(sql: str, params: tuple = (), *, fetch: str = "none"):
+    """
+    Jalankan SQL.
+    fetch = 'one' | 'all' | 'none'
+    Return: row(s) atau lastrowid.
+    """
+    db  = get_db()
+    cur = db.cursor(dictionary=True)
+    cur.execute(sql, params)
+    if fetch == "one":
+        row = cur.fetchone()
+        cur.close()
+        return row
+    if fetch == "all":
+        rows = cur.fetchall()
+        cur.close()
+        return rows
+    db.commit()
+    lid = cur.lastrowid
+    cur.close()
+    return lid
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Status helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _set_status(video_id: int, status: str, progress: int = 0, error_msg: str = ""):
+    """Update status & progress di tabel Videos."""
+    # Gunakan koneksi baru karena dipanggil dari background thread
     try:
-        with conn.cursor() as cur:
-            cur.execute(sql, args or ())
-            if fetch == "one":
-                return cur.fetchone()
-            if fetch == "all":
-                return cur.fetchall()
-            return cur.lastrowid
-    finally:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        cur  = conn.cursor()
+        cur.execute(
+            "UPDATE Videos SET status=%s, progress_pct=%s, error_msg=%s, updated_at=NOW() "
+            "WHERE video_id=%s",
+            (status, progress, error_msg, video_id),
+        )
+        conn.commit()
+        cur.close()
         conn.close()
+    except Exception as e:
+        print(f"[DB] _set_status error: {e}")
+
+
+def _save_analysis(
+    video_id:             int,
+    processing_time_sec:  float,
+    annotated_path:       str,
+    heatmap_home_path:    str,
+    heatmap_away_path:    str,
+    zone_grid_path:       str,
+    zone_voronoi_path:    str,
+    possession_home:      float,
+    possession_away:      float,
+    ball_speed_max:       float,
+    ball_speed_avg:       float,
+    player_speed_max:     float,
+    total_frames:         int,
+    metadata_dict:        dict,
+) -> int:
+    """Simpan AnalysisResults + AnalysisMetadata. Return analysis_id."""
+    try:
+        conn = mysql.connector.connect(**DB_CONFIG)
+        cur  = conn.cursor()
+
+        cur.execute(
+            """INSERT INTO AnalysisResults
+               (video_id, model_name, tracking_method, processing_time_sec,
+                anotated_video_path, heatmap_home_path, heatmap_away_path,
+                zone_grid_path, zone_voronoi_path,
+                analysis_date,
+                ball_posession_home, ball_posession_away,
+                ball_speed_max_kmh, ball_speed_avg_kmh,
+                player_speed_max_kmh, total_frames)
+               VALUES (%s,'RF-DETR Base','ByteTrack',%s,%s,%s,%s,%s,%s,NOW(),%s,%s,%s,%s,%s,%s)""",
+            (
+                video_id, processing_time_sec,
+                annotated_path, heatmap_home_path, heatmap_away_path,
+                zone_grid_path, zone_voronoi_path,
+                possession_home, possession_away,
+                ball_speed_max, ball_speed_avg,
+                player_speed_max, total_frames,
+            ),
+        )
+        analysis_id = cur.lastrowid
+
+        cur.execute(
+            "INSERT INTO AnalysisMetadata (analysis_id, analysis_data) VALUES (%s, %s)",
+            (analysis_id, json.dumps(metadata_dict, ensure_ascii=False)),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return analysis_id
+    except Exception as e:
+        print(f"[DB] _save_analysis error: {e}")
+        return -1
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Utils
+# Video I/O helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+def read_video(path: str) -> list:
+    cap    = cv2.VideoCapture(path)
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(frame)
+    cap.release()
+    return frames
 
 
-def hex_to_bgr(hex_color: str) -> tuple:
-    """Konversi warna hex (#RRGGBB) → tuple BGR untuk OpenCV."""
-    hex_color = hex_color.lstrip("#")
-    if len(hex_color) != 6:
-        return (255, 255, 255)
-    r = int(hex_color[0:2], 16)
-    g = int(hex_color[2:4], 16)
-    b = int(hex_color[4:6], 16)
-    return (b, g, r)   # OpenCV = BGR
+def save_video(frames: list, out_path: str, fps: float = 24.0):
+    if not frames:
+        return
+    h, w = frames[0].shape[:2]
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")
+    writer = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+    for f in frames:
+        writer.write(f)
+    writer.release()
 
 
-def get_video_info(filepath: str) -> dict:
-    cap = cv2.VideoCapture(filepath)
-    if not cap.isOpened():
-        return {}
+def get_video_meta(path: str) -> dict:
+    cap = cv2.VideoCapture(path)
     fps    = cap.get(cv2.CAP_PROP_FPS) or 24
-    frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     w      = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h      = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
-    dur = int(frames / fps) if fps > 0 else 0
+    duration = int(frames / fps) if fps else 0
     return {
         "fps":          round(fps, 2),
-        "duration_sec": dur,
+        "total_frames": frames,
+        "duration_sec": duration,
         "resolution":   f"{w}x{h}",
     }
 
 
-def image_to_blob(path: str) -> bytes | None:
-    if not path or not os.path.exists(path):
-        return None
-    with open(path, "rb") as f:
-        return f.read()
-
-
-def save_image_to_db(analysis_id: int, image_type: str, image_path: str) -> None:
-    blob = image_to_blob(image_path)
-    if blob is None:
-        print(f"[DB] WARNING: Gambar tidak ditemukan: {image_path}")
-        return
-    ext     = os.path.splitext(image_path)[1].lower()
-    mime    = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/png"
-    size_kb = len(blob) // 1024
-    db_execute(
-        """INSERT INTO AnalysisImages
-               (analysis_id, image_type, image_data, mime_type, file_size_kb)
-           VALUES (%s, %s, %s, %s, %s)
-           ON DUPLICATE KEY UPDATE
-               image_data=%s, mime_type=%s, file_size_kb=%s""",
-        (analysis_id, image_type, blob, mime, size_kb,
-         blob, mime, size_kb),
-    )
-    print(f"[DB] Saved image '{image_type}' ({size_kb} KB) → analysis_id={analysis_id}")
-
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Pipeline
+# Core analysis pipeline (dijalankan di background thread)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_pipeline(video_id: int, video_path: str, color_config: dict) -> None:
+def run_analysis(video_id: int, video_path: str, out_dir: Path):
     """
-    Jalankan full pipeline di background thread.
-    color_config berisi warna yang dipilih user dari UI (hex strings).
+    Full analysis pipeline:
+      1. Read video
+      2. Detect & Track (RF-DETR + ByteTrack + Ball YOLO)
+      3. Interpolate ball
+      4. Team assignment (color-based)
+      5. Camera movement estimation
+      6. Speed & distance estimation
+      7. Keypoint detection
+      8. Homography computation
+      9. Ball possession
+     10. Draw annotations + tactical map
+     11. Heatmap & Zone analysis
+     12. Save outputs → DB
     """
     t_start = time.time()
+    _set_status(video_id, "processing", 5)
 
     try:
-        db_execute(
-            "UPDATE Videos SET status='processing', progress_pct=5 WHERE video_id=%s",
-            (video_id,),
+        # ── 1. Read video ────────────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Reading video…")
+        frames = read_video(video_path)
+        if not frames:
+            raise ValueError("Tidak ada frame terbaca dari video.")
+
+        n_frames = len(frames)
+        video_meta = get_video_meta(video_path)
+        fps = video_meta["fps"]
+
+        # ── Update meta ke Videos table ─────────────────────────────────────
+        try:
+            conn = mysql.connector.connect(**DB_CONFIG)
+            cur  = conn.cursor()
+            cur.execute(
+                "UPDATE Videos SET fps=%s, duration_sec=%s, resolution=%s WHERE video_id=%s",
+                (fps, video_meta["duration_sec"], video_meta["resolution"], video_id),
+            )
+            conn.commit(); cur.close(); conn.close()
+        except Exception as e:
+            print(f"[DB] meta update error: {e}")
+
+        _set_status(video_id, "processing", 10)
+
+        # ── 2. Tracker ───────────────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Detecting & Tracking…")
+        tracker = Tracker(
+            model_path      = RFDETR_WEIGHTS,
+            ball_model_path = BALL_YOLO_WEIGHTS if os.path.exists(BALL_YOLO_WEIGHTS) else None,
         )
 
-        # ── Import modul analisis ─────────────────────────────────────────────
-        from trackers                     import Tracker
-        from team_assigner                import TeamAssigner
-        from team_ball_control            import TeamBallControl
-        from player_ball_assigner         import PlayerBallAssigner
-        from camera_movement_estimator    import CameraMovementEstimator
-        from speed_and_distance_estimator import SpeedAndDistance_Estimator
-        # Import KeypointDetector — coba semua kemungkinan nama file
-        # Prioritas: keypoint_det_soccana (versi terbaru dengan detect_batch + 3 filter)
-        _kp_module = None
-        for _mod_name in (
-            "keypoint_det_soccana",       # versi terbaru (detect_batch, 3 filter)
-            "keypoint_detector",           # nama generik
-            "keypoint_detection_Soccana",  # versi lama (detect_keypoints_batch saja)
-        ):
-            try:
-                import importlib as _il
-                _kp_module = _il.import_module(_mod_name)
-                print(f"[Pipeline {video_id}] KeypointDetector loaded from: {_mod_name}")
-                break
-            except ImportError:
-                continue
-        if _kp_module is None:
-            raise ImportError("Tidak bisa menemukan modul KeypointDetector. "
-                              "Pastikan salah satu file berikut ada: "
-                              "keypoint_det_soccana.py / keypoint_detector.py / keypoint_detection_Soccana.py")
-        KeypointDetector = _kp_module.KeypointDetector
-        from homography                   import HomographyCalculator
-        from tactical_map                 import TacticalMapRenderer
-        from utils                        import read_video, save_video
-        from heatmap_analyzer             import HeatmapAnalyzer
-        from zone_analyzer                import ZoneAnalyzer
-        import numpy as np
+        stub_tracks = str(STUB_DIR / f"{video_id}_tracks.pkl")
+        tracks = tracker.get_object_tracks(
+            frames,
+            read_from_stub = os.path.exists(stub_tracks),
+            stub_path      = stub_tracks,
+        )
+        _set_status(video_id, "processing", 25)
 
-        # ── Konversi warna user (hex → BGR tuple) ────────────────────────────
-        t1_sec_bgr = hex_to_bgr(color_config.get("team1_color_secondary",  "#E53E3E"))
-        t1_gk_bgr  = hex_to_bgr(color_config.get("team1_goalkeeper_color", "#F6AD55"))
-        t2_sec_bgr = hex_to_bgr(color_config.get("team2_color_secondary",  "#3182CE"))
-        t2_gk_bgr  = hex_to_bgr(color_config.get("team2_goalkeeper_color", "#48BB78"))
-        ref_bgr    = hex_to_bgr(color_config.get("referee_color",           "#ECC94B"))
-
-        # ── Patch module-level dicts di team_assigner ───────────────────────
-        # Dilakukan dengan hasattr agar aman meski nama atribut berbeda.
-        import team_assigner as ta_module
-        import numpy as _np
-
-        def _bgr_to_rgb(bgr: tuple) -> _np.ndarray:
-            return _np.array([bgr[2], bgr[1], bgr[0]])
-
-        # ANNOTATION_COLORS_BGR: warna bounding-box yang ditampilkan di video
-        if hasattr(ta_module, "ANNOTATION_COLORS_BGR"):
-            ta_module.ANNOTATION_COLORS_BGR[1] = t1_sec_bgr
-            ta_module.ANNOTATION_COLORS_BGR[2] = t2_sec_bgr
-        else:
-            # Fallback: buat dict baru jika atribut belum ada
-            ta_module.ANNOTATION_COLORS_BGR = {1: t1_sec_bgr, 2: t2_sec_bgr}
-
-        # TEAM_COLORS: warna jersey untuk klasifikasi tim (RGB numpy array)
-        if hasattr(ta_module, "TEAM_COLORS"):
-            ta_module.TEAM_COLORS[1]["goalkeeper"] = _bgr_to_rgb(t1_gk_bgr)
-            ta_module.TEAM_COLORS[2]["goalkeeper"] = _bgr_to_rgb(t2_gk_bgr)
-
-        # ── 1. Baca video ─────────────────────────────────────────────────────
-        print(f"[Pipeline {video_id}] Reading video...")
-        video_frames = read_video(video_path)
-        frame_h, frame_w = video_frames[0].shape[:2]
-        total_frames = len(video_frames)
-        print(f"[Pipeline {video_id}] Total frames: {total_frames}")
-        db_execute("UPDATE Videos SET progress_pct=10 WHERE video_id=%s", (video_id,))
-
-        # ── 2. Tracking ───────────────────────────────────────────────────────
-        print(f"[Pipeline {video_id}] Tracking...")
-        tracker = Tracker(model_path=TRACKER_MODEL, ball_model_path=BALL_MODEL)
-        tracks  = tracker.get_object_tracks(video_frames, read_from_stub=False)
+        # ── 3. Interpolate ball ──────────────────────────────────────────────
         tracks["ball"] = tracker.interpolate_ball_positions(tracks["ball"])
-        tracker.add_object_positions(tracks)
-        db_execute("UPDATE Videos SET progress_pct=30 WHERE video_id=%s", (video_id,))
 
-        # ── 3. Camera movement ────────────────────────────────────────────────
-        cam_estimator = CameraMovementEstimator(video_frames[0])
-        cam_movement  = cam_estimator.get_camera_movement(video_frames, read_from_stub=False)
-        cam_estimator.add_adjust_positions_to_tracks(tracks, cam_movement)
-
-        # ── 4. Team assignment ────────────────────────────────────────────────
+        # ── 4. Team assignment ───────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Assigning teams…")
         team_assigner = TeamAssigner()
-        team_assigner.assign_team_color(video_frames, tracks["player"], sample_frames=10)
+        team_assigner.assign_team_color(frames, tracks["player"])
 
-        # Override annotation colors pada instance (warna bbox video output)
-        team_assigner.team_colors[1] = t1_sec_bgr
-        team_assigner.team_colors[2] = t2_sec_bgr
-
-        for frame_num, player_track in enumerate(tracks["player"]):
+        all_players_frames = tracks["player"]
+        for frame_num, player_track in enumerate(all_players_frames):
             for player_id, track in player_track.items():
                 team = team_assigner.get_player_team(
-                    video_frames[frame_num], track["bbox"], player_id,
-                    is_goalkeeper=False,
+                    frames[frame_num], track["bbox"], player_id
                 )
                 tracks["player"][frame_num][player_id]["team"]       = team
-                tracks["player"][frame_num][player_id]["team_color"] = \
-                    team_assigner.team_colors.get(team, (200, 200, 200))
+                tracks["player"][frame_num][player_id]["team_color"]  = team_assigner.team_colors.get(team, (0, 0, 255))
 
+        # Goalkeeper team assignment
         for frame_num, gk_track in enumerate(tracks["goalkeeper"]):
             for gk_id, track in gk_track.items():
                 team = team_assigner.get_player_team(
-                    video_frames[frame_num], track["bbox"], gk_id,
-                    is_goalkeeper=True,
+                    frames[frame_num], track["bbox"], gk_id, is_goalkeeper=True
                 )
-                # Warna goalkeeper sesuai pilihan user
-                gk_color = t1_gk_bgr if team == 1 else t2_gk_bgr
                 tracks["goalkeeper"][frame_num][gk_id]["team"]       = team
-                tracks["goalkeeper"][frame_num][gk_id]["team_color"] = gk_color
+                tracks["goalkeeper"][frame_num][gk_id]["team_color"]  = team_assigner.team_colors.get(team, (0, 255, 255))
 
-        db_execute("UPDATE Videos SET progress_pct=45 WHERE video_id=%s", (video_id,))
+        _set_status(video_id, "processing", 35)
 
-        # ── 5. Speed & Distance ───────────────────────────────────────────────
+        # ── 5. Camera movement ───────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Estimating camera movement…")
+        cam_est = CameraMovementEstimator(frames[0])
+        stub_cam = str(STUB_DIR / f"{video_id}_camera.pkl")
+        camera_movement = cam_est.get_camera_movement(
+            frames,
+            read_from_stub = os.path.exists(stub_cam),
+            stub_path      = stub_cam,
+        )
+        _set_status(video_id, "processing", 42)
+
+        # ── 6. Positions ─────────────────────────────────────────────────────
+        tracker.add_object_positions(tracks)
+        cam_est.add_adjust_positions_to_tracks(tracks, camera_movement)
+
+        # ── 7. Speed & distance ──────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Computing speed & distance…")
         speed_est = SpeedAndDistance_Estimator()
+        speed_est.frame_rate = fps
         speed_est.add_speed_and_distance_to_tracks(tracks)
+        _set_status(video_id, "processing", 50)
 
-        # ── 6. Ball possession ────────────────────────────────────────────────
-        player_assigner = PlayerBallAssigner()
-        team_control    = TeamBallControl()
-        for frame_num, player_track in enumerate(tracks["player"]):
-            ball_frm = tracks["ball"][frame_num]
-            if not ball_frm:
-                team_control.update(-1, player_track)
-                continue
-            ball_bbox       = ball_frm[1]["bbox"]
-            assigned_player = player_assigner.assign_ball_to_player(player_track, ball_bbox)
-            team_control.update(assigned_player, tracks["player"][frame_num])
-            if assigned_player != -1:
-                tracks["player"][frame_num][assigned_player]["has_ball"] = True
-        team_ball_control = np.array(team_control.get_sequence())
-        db_execute("UPDATE Videos SET progress_pct=55 WHERE video_id=%s", (video_id,))
+        # ── 8. Keypoint detection ────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Detecting pitch keypoints…")
+        kp_detector = KeypointDetector(KP_MODEL_PATH, confidence_threshold=0.5)
+        print("Detecting pitch keypoints...")
+        all_kp = kp_detector.detect_keypoints_batch(frames)
+        _set_status(video_id, "processing", 62)
 
-        # ── 7. Keypoint detection ─────────────────────────────────────────────
-        print(f"[Pipeline {video_id}] Detecting keypoints...")
-        kp_detector = KeypointDetector(model_path=KP_MODEL, confidence_threshold=0.5)
-
-        # Patch: tambahkan detect_batch ke instance jika tidak ada
-        # (untuk kompatibilitas dengan keypoint_detection_Soccana.py versi lama)
-        if not hasattr(kp_detector, "detect_batch"):
-            def _detect_batch_patch(frames, batch_size=8):
-                """Patch detect_batch untuk versi KeypointDetector lama."""
-                results = []
-                for i, frame in enumerate(frames):
-                    if i % 50 == 0:
-                        print(f"[KeypointDetector] {i}/{len(frames)} frames...")
-                    # detect_keypoints_batch ada di versi lama
-                    if hasattr(kp_detector, "detect_keypoints"):
-                        kp = kp_detector.detect_keypoints(frame)
-                    elif hasattr(kp_detector, "detect"):
-                        kp, _ = kp_detector.detect(frame)
-                    else:
-                        kp = {}
-                    results.append(kp)
-                print(f"[KeypointDetector] Done — {len(frames)} frames processed.")
-                return results
-            import types
-            kp_detector.detect_batch = types.MethodType(
-                lambda self, frames, batch_size=8: _detect_batch_patch(frames, batch_size),
-                kp_detector
-            )
-
-        raw_kp = kp_detector.detect_batch(video_frames)
-
-        # Normalisasi output: pastikan semua entry adalah dict {int: (float,float)}
-        # dan buang koordinat di luar batas frame
-        all_kp = []
-        for kp in raw_kp:
-            if kp is None:
-                all_kp.append({})
-                continue
-            filtered = {}
-            for kid, val in kp.items():
-                # val bisa (x, y) atau (x, y, conf) tergantung versi
-                x, y = float(val[0]), float(val[1])
-                if 0 <= x < frame_w and 0 <= y < frame_h:
-                    filtered[int(kid)] = (x, y)
-            all_kp.append(filtered)
-        db_execute("UPDATE Videos SET progress_pct=65 WHERE video_id=%s", (video_id,))
-
-        # ── 8. Ball trajectory ────────────────────────────────────────────────
-        renderer         = TacticalMapRenderer()
-        heatmap_analyzer = HeatmapAnalyzer(
-            canvas_w=960, canvas_h=560,
-            gaussian_radius=25, output_scale=2.0,
+        # ── 9. Homography ────────────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Computing homography…")
+        homography_calc = HomographyCalculator(
+            min_keypoints       = 4,
+            canvas_w            = 960,
+            canvas_h            = 560,
+            max_reproj_error_cm = 500.0,
         )
-        zone_analyzer   = ZoneAnalyzer(
-            canvas_w=960, canvas_h=560,
-            grid_cols=6, grid_rows=4, output_scale=2.0,
-        )
-        homography_calc = HomographyCalculator(min_keypoints=4)
 
-        hc_pass1     = HomographyCalculator(min_keypoints=4)
-        raw_ball_pos = []
-        for frame_num, kp in enumerate(all_kp):
-            H        = hc_pass1.get_homography(kp)
-            ball_frm = tracks["ball"][frame_num]
-            pos      = None
-            if ball_frm:
-                bpos = ball_frm[1].get("position_adjusted") or ball_frm[1].get("position")
-                if bpos:
-                    candidate = hc_pass1.transform_point(
-                        bpos, H,
-                        canvas_w=renderer.canvas_w,
-                        canvas_h=renderer.canvas_h,
-                        margin=0,
-                    )
-                    if candidate is not None:
-                        cx, cy = candidate
-                        if 0 <= cx <= renderer.canvas_w and 0 <= cy <= renderer.canvas_h:
-                            pos = candidate
-            raw_ball_pos.append(pos)
+        # ── 10. Ball possession ──────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Computing ball possession…")
+        pba  = PlayerBallAssigner()
+        tbc  = TeamBallControl()
+        import numpy as np
 
-        MAX_JUMP_PX = 120
-        WINDOW      = 9
-        filtered_ball = []
-        prev = None
-        for p in raw_ball_pos:
-            if p is None:
-                filtered_ball.append(None)
-                continue
-            if prev is not None:
-                dist = ((p[0] - prev[0]) ** 2 + (p[1] - prev[1]) ** 2) ** 0.5
-                if dist > MAX_JUMP_PX:
-                    filtered_ball.append(None)
-                    prev = None
-                    continue
-            filtered_ball.append(p)
-            prev = p
-
-        xs   = [p[0] if p else None for p in filtered_ball]
-        ys   = [p[1] if p else None for p in filtered_ball]
-        half = WINDOW // 2
-        ball_trail_smooth = []
-        for i in range(len(filtered_ball)):
-            wx = [xs[j] for j in range(max(0, i - half), min(len(xs), i + half + 1))
-                  if xs[j] is not None]
-            wy = [ys[j] for j in range(max(0, i - half), min(len(ys), i + half + 1))
-                  if ys[j] is not None]
-            if wx and wy:
-                ball_trail_smooth.append((int(np.median(wx)), int(np.median(wy))))
+        for frame_num, ball_bbox_dict in enumerate(tracks["ball"]):
+            ball_bbox = ball_bbox_dict.get(1, {}).get("bbox")
+            if ball_bbox:
+                all_players = {**tracks["player"][frame_num], **tracks["goalkeeper"][frame_num]}
+                assigned = pba.assign_ball_to_player(all_players, ball_bbox)
+                if assigned != -1:
+                    pid  = assigned
+                    pdict = all_players.get(pid, {})
+                    tbc.update(assigned, pdict if "team" in pdict else
+                               tracks["player"][frame_num].get(pid,
+                               tracks["goalkeeper"][frame_num].get(pid, {})))
+                    # Mark has_ball
+                    if pid in tracks["player"][frame_num]:
+                        tracks["player"][frame_num][pid]["has_ball"] = True
+                    elif pid in tracks["goalkeeper"][frame_num]:
+                        tracks["goalkeeper"][frame_num][pid]["has_ball"] = True
+                else:
+                    tbc.update(-1, {})
             else:
-                ball_trail_smooth.append(None)
+                tbc.update(-1, {})
 
-        # ── 9. Build tactical frames + collect data ───────────────────────────
-        print(f"[Pipeline {video_id}] Rendering tactical map...")
-        tactical_frames = []
-        for frame_num, kp in enumerate(all_kp):
-            H = homography_calc.get_homography(kp)
-            player_positions = {}
+        ball_control_seq = np.array(tbc.get_sequence(), dtype=float)
+        # Hitung possession %
+        valid = ball_control_seq[ball_control_seq > 0]
+        if len(valid) > 0:
+            poss_home = float((valid == 1).sum() / len(valid) * 100)
+            poss_away = float((valid == 2).sum() / len(valid) * 100)
+        else:
+            poss_home, poss_away = 50.0, 50.0
 
-            for player_id, track in tracks["player"][frame_num].items():
-                pos = track.get("position_adjusted") or track.get("position")
+        _set_status(video_id, "processing", 70)
+
+        # ── 11. Speed stats ──────────────────────────────────────────────────
+        all_speeds_t1, all_speeds_t2 = [], []
+        all_ball_speeds = []
+
+        for frame_num in range(n_frames):
+            for pid, pinfo in tracks["player"][frame_num].items():
+                sp = pinfo.get("speed")
+                if sp is None:
+                    continue
+                team = pinfo.get("team", 0)
+                if team == 1:
+                    all_speeds_t1.append(sp)
+                elif team == 2:
+                    all_speeds_t2.append(sp)
+
+        ball_speed_max = 0.0
+        ball_speed_avg = 0.0
+        player_speed_max = 0.0
+        avg_speed_t1 = 0.0
+        avg_speed_t2 = 0.0
+
+        if all_speeds_t1:
+            avg_speed_t1    = round(float(np.mean(all_speeds_t1)), 2)
+        if all_speeds_t2:
+            avg_speed_t2    = round(float(np.mean(all_speeds_t2)), 2)
+        if all_speeds_t1 or all_speeds_t2:
+            player_speed_max = round(float(max(
+                (max(all_speeds_t1) if all_speeds_t1 else 0),
+                (max(all_speeds_t2) if all_speeds_t2 else 0),
+            )), 2)
+
+        # ── 12. Draw annotations ─────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Drawing annotations…")
+        output_frames = tracker.draw_annotations(frames, tracks, ball_control_seq)
+        _set_status(video_id, "processing", 78)
+
+        # ── 13. Tactical map + Heatmap + Zone ────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Rendering tactical maps…")
+        tac_renderer = TacticalMapRenderer(canvas_w=960, canvas_h=560)
+        heatmap_ana  = HeatmapAnalyzer(canvas_w=960, canvas_h=560)
+        zone_ana     = ZoneAnalyzer(canvas_w=960, canvas_h=560)
+
+        ball_trail: list = []
+        tac_frames: list = []
+
+        for frame_num in range(n_frames):
+            kp = all_kp[frame_num]
+            H  = homography_calc.get_homography(kp)
+
+            # Player positions for tactical map
+            player_map_pos = {}
+            for pid, pinfo in tracks["player"][frame_num].items():
+                pos = pinfo.get("position_adjusted") or pinfo.get("position")
                 if pos is None:
                     continue
-                map_pos = homography_calc.transform_point(
-                    pos, H,
-                    canvas_w=renderer.canvas_w,
-                    canvas_h=renderer.canvas_h,
-                    margin=5,
-                )
-                player_positions[player_id] = {
-                    "map_pos": map_pos,
-                    "team":    track.get("team", -1),
+                mp = homography_calc.transform_point(pos, H, canvas_w=960, canvas_h=560)
+                player_map_pos[pid] = {
+                    "map_pos": mp,
+                    "team":    pinfo.get("team", -1),
                     "role":    "player",
                 }
-
-            for gk_id, track in tracks["goalkeeper"][frame_num].items():
-                pos = track.get("position_adjusted") or track.get("position")
+            for gid, ginfo in tracks["goalkeeper"][frame_num].items():
+                pos = ginfo.get("position_adjusted") or ginfo.get("position")
                 if pos is None:
                     continue
-                map_pos = homography_calc.transform_point(
-                    pos, H,
-                    canvas_w=renderer.canvas_w,
-                    canvas_h=renderer.canvas_h,
-                    margin=5,
-                )
-                player_positions[f"gk_{gk_id}"] = {
-                    "map_pos": map_pos,
-                    "team":    track.get("team", -1),
+                mp = homography_calc.transform_point(pos, H, canvas_w=960, canvas_h=560)
+                player_map_pos[gid] = {
+                    "map_pos": mp,
+                    "team":    ginfo.get("team", -1),
                     "role":    "goalkeeper",
                 }
 
-            tac_frame = renderer.render(
-                player_positions=player_positions,
-                ball_position=ball_trail_smooth[frame_num],
-                ball_trail=ball_trail_smooth[: frame_num + 1],
+            # Ball
+            ball_bbox = tracks["ball"][frame_num].get(1, {}).get("bbox")
+            ball_map  = None
+            if ball_bbox:
+                from utils import get_center_of_bbox
+                bpos = tracks["ball"][frame_num].get(1, {}).get("position") or \
+                       (get_center_of_bbox(ball_bbox) if ball_bbox else None)
+                if bpos:
+                    ball_map = homography_calc.transform_point(bpos, H, canvas_w=960, canvas_h=560)
+            ball_trail.append(ball_map)
+
+            # Render tactical canvas
+            tac_canvas = tac_renderer.render(
+                player_positions = player_map_pos,
+                ball_position    = ball_map,
+                ball_trail       = ball_trail,
             )
-            heatmap_analyzer.collect(
-                frame_num=frame_num,
-                tracks=tracks,
-                homography_calc=homography_calc,
-                keypoints=kp,
-                team_ball_control=team_ball_control,
-            )
-            zone_analyzer.collect(
-                frame_num=frame_num,
-                tracks=tracks,
-                homography_calc=homography_calc,
-                keypoints=kp,
-                ball_map_pos=ball_trail_smooth[frame_num],
-            )
-            tactical_frames.append(tac_frame)
 
-        db_execute("UPDATE Videos SET progress_pct=75 WHERE video_id=%s", (video_id,))
+            # Overlay tactical map (bottom-right corner) pada annotation frame
+            ann_frame = output_frames[frame_num].copy()
+            fh, fw    = ann_frame.shape[:2]
+            th, tw    = tac_canvas.shape[:2]
+            # Scale tactical map to 30% of frame width
+            scale = fw * 0.30 / tw
+            nt, nw = int(th * scale), int(tw * scale)
+            small  = cv2.resize(tac_canvas, (nw, nt))
+            margin = 10
+            y1, y2 = fh - nt - margin, fh - margin
+            x1, x2 = fw - nw - margin, fw - margin
+            # alpha blend
+            roi = ann_frame[y1:y2, x1:x2]
+            blended = cv2.addWeighted(small, 0.85, roi, 0.15, 0)
+            ann_frame[y1:y2, x1:x2] = blended
+            output_frames[frame_num] = ann_frame
 
-        # ── 10. Save analysis images ke folder sementara ──────────────────────
-        video_name = (
-            os.path.basename(video_path)
-            .replace(".mp4", "").replace(".avi", "")
-            .replace(".mov", "").replace(".mkv", "")
-        )
-        tmp_dir = os.path.join(ANALYSIS_FOLDER, f"tmp_{video_id}")
-        os.makedirs(tmp_dir, exist_ok=True)
+            # Collect for heatmap & zone
+            tbc_arr = ball_control_seq[:frame_num+1] if frame_num < len(ball_control_seq) else ball_control_seq
+            heatmap_ana.collect(frame_num, tracks, homography_calc, kp, tbc_arr)
+            zone_ana.collect(frame_num, tracks, homography_calc, kp, ball_map)
 
-        saved_hm   = heatmap_analyzer.save_all(output_dir=tmp_dir, video_name=video_name, fmt="png")
-        saved_zone = zone_analyzer.save_all(output_dir=tmp_dir, video_name=video_name, fmt="png")
+        _set_status(video_id, "processing", 87)
 
-        # ── 11. Hitung statistik ──────────────────────────────────────────────
-        ctrl   = team_ball_control
-        t1_pct = float((ctrl == 1).sum() / max(len(ctrl), 1) * 100)
-        t2_pct = float((ctrl == 2).sum() / max(len(ctrl), 1) * 100)
-        hm_stats = heatmap_analyzer.get_summary_stats()
+        # ── 14. Save output video ─────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Saving output video…")
+        out_video_path = str(out_dir / "annotated.avi")
+        save_video(output_frames, out_video_path, fps)
 
-        def avg_speed(team_id: int) -> float:
-            speeds = []
-            for frame in tracks["player"]:
-                for _, data in frame.items():
-                    if data.get("team") == team_id and data.get("speed") is not None:
-                        speeds.append(data["speed"])
-            return round(float(np.mean(speeds)), 1) if speeds else 0.0
+        # ── 15. Save heatmaps ─────────────────────────────────────────────────
+        print(f"[Pipeline] [{video_id}] Saving heatmaps…")
+        hm_paths  = heatmap_ana.save_all(output_dir=str(out_dir), video_name=str(video_id))
+        zon_paths = zone_ana.save_all(output_dir=str(out_dir), video_name=str(video_id))
 
-        avg_s1 = avg_speed(1)
-        avg_s2 = avg_speed(2)
+        # Rename heatmap outputs ke nama yang dipakai index.html
+        heatmap_home_path = ""
+        heatmap_away_path = ""
+        for key, src in hm_paths.items():
+            if "team1" in key and src.endswith((".png", ".jpg")):
+                dst = str(out_dir / "heatmap_home.jpg")
+                os.replace(src, dst)
+                heatmap_home_path = dst
+            elif "team2" in key and src.endswith((".png", ".jpg")):
+                dst = str(out_dir / "heatmap_away.jpg")
+                os.replace(src, dst)
+                heatmap_away_path = dst
 
-        all_speeds = [
-            d["speed"]
-            for frame in tracks["player"]
-            for _, d in frame.items()
-            if d.get("speed") is not None
-        ]
-        player_speed_max = round(max(all_speeds), 1) if all_speeds else 0.0
+        zone_grid_path    = zon_paths.get("zone_grid",    "")
+        zone_voronoi_path = zon_paths.get("zone_voronoi", "")
 
-        # ── 12. Annotasi video ────────────────────────────────────────────────
-        print(f"[Pipeline {video_id}] Drawing annotations...")
-        output_frames = tracker.draw_annotations(video_frames, tracks, team_ball_control)
-        output_frames = cam_estimator.draw_camera_movement(output_frames, cam_movement)
-        speed_est.draw_speed_and_distance(output_frames, tracks)
+        _set_status(video_id, "processing", 93)
 
-        # Gambar ulang bbox wasit dengan warna pilihan user
-        for frame_num, frame in enumerate(output_frames):
-            for track_id, referee in tracks["referee"][frame_num].items():
-                tracker.draw_ellipse(frame, referee["bbox"], ref_bgr, track_id)
-
-        # Side-by-side
-        tac_h   = frame_h
-        tac_w   = int(tac_h * renderer.canvas_w / renderer.canvas_h)
-        divider = np.full((frame_h, 4, 3), 180, dtype=np.uint8)
-        combined_frames = [
-            np.hstack([output_frames[i], divider,
-                       cv2.resize(tactical_frames[i], (tac_w, tac_h))])
-            for i in range(len(output_frames))
-        ]
-
-        # ── 13. Simpan output video ───────────────────────────────────────────
-        out_filename = f"{video_name}_output_{video_id}.avi"
-        out_path     = os.path.join(OUTPUT_FOLDER, out_filename)
-        save_video(combined_frames, out_path)
-        print(f"[Pipeline {video_id}] Saved video → {out_path}")
-        db_execute("UPDATE Videos SET progress_pct=88 WHERE video_id=%s", (video_id,))
-
-        # ── 14. Simpan ke database ────────────────────────────────────────────
-        t_elapsed = round(time.time() - t_start, 1)
-
-        analysis_id = db_execute(
-            """INSERT INTO AnalysisResults
-               (video_id, model_name, tracking_method, processing_time_sec,
-                anotated_video_path, ball_posession_home, ball_posession_away,
-                player_speed_max_kmh, avg_speed_team1_kmh, avg_speed_team2_kmh,
-                total_frames, analysis_date)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (
-                video_id, "RF-DETR Base", "ByteTrack", t_elapsed,
-                out_path, round(t1_pct, 1), round(t2_pct, 1),
-                player_speed_max, avg_s1, avg_s2,
-                total_frames, datetime.now(),
-            ),
-        )
-
-        # Zone stats JSON
-        zone_stats_path = saved_zone.get("zone_stats", "")
-        if zone_stats_path and os.path.exists(zone_stats_path):
-            with open(zone_stats_path, encoding="utf-8") as f:
-                zone_stats_json = json.load(f)
-        else:
-            zone_stats_json = {}
-
-        db_execute(
-            """INSERT INTO AnalysisMetadata (analysis_id, heatmap_stats, zone_stats)
-               VALUES (%s, %s, %s)""",
-            (analysis_id, json.dumps(hm_stats), json.dumps(zone_stats_json)),
-        )
-
-        # Simpan gambar ke BLOB
-        image_map = {
-            "heatmap_team1":    saved_hm.get("heatmap_team1"),
-            "heatmap_team2":    saved_hm.get("heatmap_team2"),
-            "heatmap_combined": saved_hm.get("heatmap_combined"),
-            "zone_control":     saved_hm.get("zone_control"),
-            "zone_grid":        saved_zone.get("zone_grid"),
-            "zone_voronoi":     saved_zone.get("zone_voronoi"),
+        # ── 16. Build metadata dict ───────────────────────────────────────────
+        metadata = {
+            "avg_speed_team1":  avg_speed_t1,
+            "avg_speed_team2":  avg_speed_t2,
+            "heatmap_home_path": heatmap_home_path,
+            "heatmap_away_path": heatmap_away_path,
+            "zone_grid_path":    zone_grid_path,
+            "zone_voronoi_path": zone_voronoi_path,
+            "heatmap_stats":     heatmap_ana.get_summary_stats(),
+            "zone_stats":        zon_paths.get("zone_stats", ""),
+            "ball_speed": {
+                "max_kmh": ball_speed_max,
+                "avg_kmh": ball_speed_avg,
+            },
         }
-        for img_type, img_path in image_map.items():
-            if img_path and os.path.exists(img_path):
-                save_image_to_db(analysis_id, img_type, img_path)
 
-        db_execute("UPDATE Videos SET progress_pct=95 WHERE video_id=%s", (video_id,))
-        db_execute(
-            "UPDATE Videos SET file_path_output=%s WHERE video_id=%s",
-            (out_path, video_id),
+        # ── 17. Simpan ke DB ──────────────────────────────────────────────────
+        proc_time = round(time.time() - t_start, 1)
+        _save_analysis(
+            video_id             = video_id,
+            processing_time_sec  = proc_time,
+            annotated_path       = out_video_path,
+            heatmap_home_path    = heatmap_home_path,
+            heatmap_away_path    = heatmap_away_path,
+            zone_grid_path       = zone_grid_path,
+            zone_voronoi_path    = zone_voronoi_path,
+            possession_home      = round(poss_home, 1),
+            possession_away      = round(poss_away, 1),
+            ball_speed_max       = ball_speed_max,
+            ball_speed_avg       = ball_speed_avg,
+            player_speed_max     = player_speed_max,
+            total_frames         = n_frames,
+            metadata_dict        = metadata,
         )
 
-        # ── Selesai ───────────────────────────────────────────────────────────
-        db_execute(
-            "UPDATE Videos SET status='done', progress_pct=100 WHERE video_id=%s",
-            (video_id,),
-        )
-        print(f"[Pipeline {video_id}] Done in {t_elapsed}s")
+        _set_status(video_id, "done", 100)
+        print(f"[Pipeline] [{video_id}] DONE in {proc_time}s")
 
-        # Hapus file sementara (gambar sudah tersimpan di DB)
-        import shutil
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    except Exception as e:
-        err_msg = traceback.format_exc()
-        print(f"[Pipeline {video_id}] ERROR:\n{err_msg}")
-        db_execute(
-            "UPDATE Videos SET status='error', error_msg=%s WHERE video_id=%s",
-            (str(e)[:2000], video_id),
-        )
+    except Exception:
+        err = traceback.format_exc()
+        print(f"[Pipeline] [{video_id}] ERROR:\n{err}")
+        _set_status(video_id, "error", 0, err[-500:])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# API Endpoints
+# API Routes
 # ─────────────────────────────────────────────────────────────────────────────
-
-@app.route("/")
-def index():
-    return send_file("index.html")
-
-
-# ── Upload & process video ──────────────────────────────────────────────────
 
 @app.route("/api/upload", methods=["POST"])
 def upload_video():
+    """Upload video + simpan ke DB + jalankan analisis di background."""
     if "video" not in request.files:
-        return jsonify({"success": False, "message": "File tidak ditemukan di request."}), 400
+        return jsonify({"success": False, "message": "Tidak ada file video."}), 400
 
-    f = request.files["video"]
-    if not f or not allowed_file(f.filename):
-        return jsonify({"success": False,
-                        "message": "Format file tidak didukung. Gunakan MP4/AVI/MOV/MKV."}), 400
+    file = request.files["video"]
+    if not file.filename:
+        return jsonify({"success": False, "message": "Nama file kosong."}), 400
 
-    video_name = request.form.get("video_name", "").strip() or secure_filename(f.filename)
-    team1      = request.form.get("team1", "Tim 1").strip()
-    team2      = request.form.get("team2", "Tim 2").strip()
+    # ── Validasi ekstensi ──────────────────────────────────────────────────
+    ALLOWED = {".mp4", ".avi", ".mov", ".mkv"}
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED:
+        return jsonify({"success": False, "message": f"Format tidak didukung: {ext}"}), 400
 
-    color_config = {
-        "team1_color_secondary":  request.form.get("team1_color_secondary",  "#E53E3E"),
-        "team1_goalkeeper_color": request.form.get("team1_goalkeeper_color", "#F6AD55"),
-        "team2_color_secondary":  request.form.get("team2_color_secondary",  "#3182CE"),
-        "team2_goalkeeper_color": request.form.get("team2_goalkeeper_color", "#48BB78"),
-        "referee_color":          request.form.get("referee_color",           "#ECC94B"),
-    }
+    # ── Ambil form data ────────────────────────────────────────────────────
+    video_name  = request.form.get("video_name", file.filename)
+    team1       = request.form.get("team1", "Tim 1")
+    team2       = request.form.get("team2", "Tim 2")
+    t1_sec      = request.form.get("team1_color_secondary",  "#E53E3E")
+    t1_gk       = request.form.get("team1_goalkeeper_color", "#F6AD55")
+    t2_sec      = request.form.get("team2_color_secondary",  "#3182CE")
+    t2_gk       = request.form.get("team2_goalkeeper_color", "#48BB78")
+    ref_col     = request.form.get("referee_color",          "#ECC94B")
 
-    filename  = secure_filename(f.filename)
-    save_path = os.path.join(UPLOAD_FOLDER, filename)
-    f.save(save_path)
-    size_mb = os.path.getsize(save_path) / (1024 * 1024)
-    vinfo   = get_video_info(save_path)
-
-    video_id = db_execute(
+    # ── Insert Videos row (status=queued) ──────────────────────────────────
+    video_id = query(
         """INSERT INTO Videos
            (video_name, team1_name, team1_color_secondary, team1_goalkeeper_color,
             team2_name, team2_color_secondary, team2_goalkeeper_color,
-            referee_color, file_path_raw, file_size_mb,
-            status, progress_pct, duration_sec, fps, resolution)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',0,%s,%s,%s)""",
-        (
-            video_name, team1,
-            color_config["team1_color_secondary"],
-            color_config["team1_goalkeeper_color"],
-            team2,
-            color_config["team2_color_secondary"],
-            color_config["team2_goalkeeper_color"],
-            color_config["referee_color"],
-            save_path, round(size_mb, 2),
-            vinfo.get("duration_sec"), vinfo.get("fps"), vinfo.get("resolution"),
-        ),
+            referee_color, status, progress_pct)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'queued',0)""",
+        (video_name, team1, t1_sec, t1_gk, team2, t2_sec, t2_gk, ref_col),
     )
 
+    # ── Simpan file ────────────────────────────────────────────────────────
+    vid_upload_dir = UPLOAD_DIR / str(video_id)
+    vid_upload_dir.mkdir(parents=True, exist_ok=True)
+    raw_path = str(vid_upload_dir / f"raw{ext}")
+    file.save(raw_path)
+
+    # ── Update file info di DB ─────────────────────────────────────────────
+    size_mb = round(os.path.getsize(raw_path) / 1024 / 1024, 2)
+    query(
+        "UPDATE Videos SET file_path_raw=%s, file_size_mb=%s WHERE video_id=%s",
+        (raw_path, size_mb, video_id),
+    )
+
+    # ── Buat output dir ────────────────────────────────────────────────────
+    out_dir = OUTPUT_DIR / str(video_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # ── Jalankan analisis di background ────────────────────────────────────
     t = threading.Thread(
-        target=run_pipeline,
-        args=(video_id, save_path, color_config),
+        target=run_analysis,
+        args=(video_id, raw_path, out_dir),
         daemon=True,
     )
     t.start()
 
-    return jsonify({
-        "success":  True,
-        "video_id": video_id,
-        "message":  "Upload berhasil. Pipeline sedang berjalan.",
-    })
+    return jsonify({"success": True, "video_id": video_id, "message": "Upload berhasil, analisis dimulai."})
 
-
-# ── List semua video ─────────────────────────────────────────────────────────
 
 @app.route("/api/videos", methods=["GET"])
 def list_videos():
-    page   = max(1, int(request.args.get("page", 1)))
-    limit  = min(50, max(1, int(request.args.get("limit", 12))))
-    offset = (page - 1) * limit
-    q      = request.args.get("q", "").strip()
+    """Daftar video dengan pagination, search & filter status."""
+    page   = max(1, int(request.args.get("page",  1)))
+    limit  = max(1, min(50, int(request.args.get("limit", 12))))
+    q      = request.args.get("q",      "").strip()
     status = request.args.get("status", "").strip()
+    offset = (page - 1) * limit
 
-    where  = []
-    params = []
+    where, params = [], []
     if q:
-        where.append("video_name LIKE %s")
-        params.append(f"%{q}%")
+        where.append("(video_name LIKE %s OR team1_name LIKE %s OR team2_name LIKE %s)")
+        like = f"%{q}%"
+        params += [like, like, like]
     if status:
         where.append("status = %s")
         params.append(status)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
 
-    total = db_execute(
-        f"SELECT COUNT(*) as cnt FROM Videos {where_sql}", params, fetch="one"
-    )
-    total = total["cnt"] if total else 0
-
-    rows = db_execute(
-        f"""SELECT video_id, video_name, team1_name, team2_name,
-                   status, progress_pct, duration_sec, fps, resolution,
-                   created_at, updated_at
-            FROM Videos {where_sql}
-            ORDER BY created_at DESC
-            LIMIT %s OFFSET %s""",
-        params + [limit, offset],
+    total = query(f"SELECT COUNT(*) AS cnt FROM Videos {where_sql}", tuple(params), fetch="one")["cnt"]
+    rows  = query(
+        f"SELECT video_id, video_name, team1_name, team2_name, status, "
+        f"progress_pct, duration_sec, fps, resolution, created_at "
+        f"FROM Videos {where_sql} ORDER BY created_at DESC LIMIT %s OFFSET %s",
+        tuple(params) + (limit, offset),
         fetch="all",
     )
 
-    videos = []
-    for r in (rows or []):
-        r["created_at"] = str(r["created_at"]) if r["created_at"] else None
-        r["updated_at"] = str(r["updated_at"]) if r["updated_at"] else None
-        videos.append(r)
+    # Serialize datetime
+    for r in rows:
+        if r.get("created_at"):
+            r["created_at"] = str(r["created_at"])
 
-    return jsonify({"total": total, "videos": videos, "page": page, "limit": limit})
+    return jsonify({"total": total, "page": page, "limit": limit, "videos": rows})
 
-
-# ── Detail satu video ────────────────────────────────────────────────────────
 
 @app.route("/api/video/<int:video_id>", methods=["GET"])
 def get_video(video_id: int):
-    v = db_execute("SELECT * FROM Videos WHERE video_id=%s", (video_id,), fetch="one")
+    """Detail satu video + hasil analisis."""
+    v = query(
+        "SELECT * FROM Videos WHERE video_id=%s", (video_id,), fetch="one"
+    )
     if not v:
         return jsonify({"success": False, "message": "Video tidak ditemukan."}), 404
 
+    # Serialize
     for k in ("created_at", "updated_at"):
         if v.get(k):
             v[k] = str(v[k])
 
-    ar = db_execute(
-        "SELECT * FROM AnalysisResults WHERE video_id=%s ORDER BY created_at DESC LIMIT 1",
+    # Ambil AnalysisResults
+    res = query(
+        "SELECT * FROM AnalysisResults WHERE video_id=%s ORDER BY analysis_id DESC LIMIT 1",
         (video_id,), fetch="one",
     )
-    result = {}
-    if ar:
-        ar_id = ar["analysis_id"]
+    if res:
         for k in ("analysis_date", "created_at"):
-            if ar.get(k):
-                ar[k] = str(ar[k])
+            if res.get(k):
+                res[k] = str(res[k])
 
-        meta_row = db_execute(
-            "SELECT * FROM AnalysisMetadata WHERE analysis_id=%s", (ar_id,), fetch="one"
+        # Ambil metadata JSON
+        meta_row = query(
+            "SELECT analysis_data FROM AnalysisMetadata WHERE analysis_id=%s",
+            (res["analysis_id"],), fetch="one",
         )
-        meta = {}
-        if meta_row:
-            for key in ("heatmap_stats", "zone_stats", "extra_data"):
-                val = meta_row.get(key)
-                if isinstance(val, str):
-                    try:
-                        val = json.loads(val)
-                    except Exception:
-                        pass
-                meta[key] = val
+        if meta_row and meta_row.get("analysis_data"):
+            try:
+                res["metadata"] = json.loads(meta_row["analysis_data"])
+            except Exception:
+                res["metadata"] = {}
+        else:
+            res["metadata"] = {}
 
-        images = db_execute(
-            "SELECT image_id, image_type, mime_type, file_size_kb "
-            "FROM AnalysisImages WHERE analysis_id=%s",
-            (ar_id,), fetch="all",
-        ) or []
+        v["result"] = res
+    else:
+        v["result"] = None
 
-        result = {**ar, "metadata": meta, "images": images}
+    return jsonify(v)
 
-    color_info = {
-        "team1_color_secondary":  v.pop("team1_color_secondary",  "#E53E3E"),
-        "team1_goalkeeper_color": v.pop("team1_goalkeeper_color", "#F6AD55"),
-        "team2_color_secondary":  v.pop("team2_color_secondary",  "#3182CE"),
-        "team2_goalkeeper_color": v.pop("team2_goalkeeper_color", "#48BB78"),
-        "referee_color":          v.pop("referee_color",           "#ECC94B"),
-    }
-
-    return jsonify({**v, "result": result, "color_config": color_info})
-
-
-# ── Serve gambar dari BLOB ───────────────────────────────────────────────────
-
-@app.route("/api/image/<int:video_id>/<image_type>", methods=["GET"])
-def serve_image(video_id: int, image_type: str):
-    ar = db_execute(
-        "SELECT analysis_id FROM AnalysisResults WHERE video_id=%s "
-        "ORDER BY created_at DESC LIMIT 1",
-        (video_id,), fetch="one",
-    )
-    if not ar:
-        return jsonify({"error": "Analysis tidak ditemukan."}), 404
-
-    row = db_execute(
-        "SELECT image_data, mime_type FROM AnalysisImages "
-        "WHERE analysis_id=%s AND image_type=%s",
-        (ar["analysis_id"], image_type), fetch="one",
-    )
-    if not row or not row["image_data"]:
-        return jsonify({"error": f"Gambar '{image_type}' tidak ditemukan."}), 404
-
-    return send_file(
-        io.BytesIO(row["image_data"]),
-        mimetype=row["mime_type"],
-        as_attachment=False,
-        download_name=f"{image_type}.png",
-    )
-
-
-# ── Serve video output dari lokal ────────────────────────────────────────────
-
-@app.route("/api/video-stream/<int:video_id>", methods=["GET"])
-def serve_video(video_id: int):
-    v = db_execute(
-        "SELECT file_path_output FROM Videos WHERE video_id=%s", (video_id,), fetch="one"
-    )
-    if not v or not v["file_path_output"]:
-        return jsonify({"error": "Video output tidak ditemukan."}), 404
-
-    path = v["file_path_output"]
-    if not os.path.exists(path):
-        return jsonify({"error": "File tidak ada di disk."}), 404
-
-    return send_from_directory(os.path.dirname(path), os.path.basename(path))
-
-
-# ── Update metadata video ────────────────────────────────────────────────────
 
 @app.route("/api/video/<int:video_id>", methods=["PUT"])
 def update_video(video_id: int):
-    data       = request.get_json(silent=True) or {}
-    video_name = data.get("video_name", "").strip()
-    if not video_name:
-        return jsonify({"success": False, "message": "Nama video tidak boleh kosong."}), 400
+    """Update metadata video (nama, tim, dll)."""
+    data = request.get_json(silent=True) or {}
+    allowed = ["video_name", "team1_name", "team2_name"]
+    sets, params = [], []
+    for col in allowed:
+        if col in data:
+            sets.append(f"{col}=%s")
+            params.append(data[col])
+    if not sets:
+        return jsonify({"success": False, "message": "Tidak ada field yang diupdate."}), 400
 
-    db_execute(
-        "UPDATE Videos SET video_name=%s, team1_name=%s, team2_name=%s WHERE video_id=%s",
-        (video_name, data.get("team1_name", "Tim 1"),
-         data.get("team2_name", "Tim 2"), video_id),
-    )
+    params.append(video_id)
+    query(f"UPDATE Videos SET {', '.join(sets)}, updated_at=NOW() WHERE video_id=%s", tuple(params))
     return jsonify({"success": True, "message": "Data diperbarui."})
 
 
-# ── Hapus video ──────────────────────────────────────────────────────────────
-
 @app.route("/api/video/<int:video_id>", methods=["DELETE"])
 def delete_video(video_id: int):
-    v = db_execute(
-        "SELECT file_path_raw, file_path_output FROM Videos WHERE video_id=%s",
-        (video_id,), fetch="one",
-    )
+    """Hapus video + file output."""
+    v = query("SELECT file_path_raw FROM Videos WHERE video_id=%s", (video_id,), fetch="one")
     if not v:
         return jsonify({"success": False, "message": "Video tidak ditemukan."}), 404
 
-    for key in ("file_path_raw", "file_path_output"):
-        p = v.get(key)
-        if p and os.path.exists(p):
-            try:
-                os.remove(p)
-            except Exception:
-                pass
+    # Hapus dari DB (cascade hapus AnalysisResults & Metadata)
+    query("DELETE FROM Videos WHERE video_id=%s", (video_id,))
 
-    db_execute("DELETE FROM Videos WHERE video_id=%s", (video_id,))
-    return jsonify({"success": True, "message": "Video dan seluruh data analisis dihapus."})
+    # Hapus file
+    import shutil
+    for d in (UPLOAD_DIR / str(video_id), OUTPUT_DIR / str(video_id)):
+        if d.exists():
+            shutil.rmtree(d, ignore_errors=True)
+
+    return jsonify({"success": True, "message": "Video dihapus."})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Run
+# Serve output files (video, heatmap, zone)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/outputs/<int:video_id>/<path:filename>")
+def serve_output(video_id: int, filename: str):
+    """Serve file hasil analisis dari folder outputs/<video_id>/."""
+    out_dir = OUTPUT_DIR / str(video_id)
+    return send_from_directory(str(out_dir), filename)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Serve index.html (SPA)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.route("/")
+@app.route("/<path:path>")
+def serve_spa(path=""):
+    index = BASE_DIR / "index.html"
+    if index.exists():
+        return index.read_text(encoding="utf-8"), 200, {"Content-Type": "text/html"}
+    return "index.html not found", 404
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("=" * 55)
-    print("  Football Detection — Flask Server")
-    print("  http://localhost:5000")
-    print("=" * 55)
-    app.run(debug=False, host="0.0.0.0", port=5000, threaded=True)
+    print("=" * 60)
+    print("  Football Detection — Flask Backend")
+    print("  Calvin Institute of Technology")
+    print("=" * 60)
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True)
